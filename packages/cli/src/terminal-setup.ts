@@ -1,12 +1,14 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
 
-const TERMINAL_PLIST = `${process.env.HOME}/Library/Preferences/com.apple.Terminal.plist`;
+const TERMINAL_PLIST = `${homedir()}/Library/Preferences/com.apple.Terminal.plist`;
 
 /** Enable "Use Option as Meta Key" so Option+Enter maps to meta+return (newline). */
 export function setupAppleTerminal(): { ok: boolean; message: string } {
   try {
-    const theme = execSync(
-      `/usr/libexec/PlistBuddy -c "Print :'Startup Window Settings'" "${TERMINAL_PLIST}"`,
+    const theme = execFileSync(
+      "/usr/libexec/PlistBuddy",
+      ["-c", "Print :'Startup Window Settings'", TERMINAL_PLIST],
       { encoding: "utf-8" },
     ).trim();
 
@@ -14,8 +16,9 @@ export function setupAppleTerminal(): { ok: boolean; message: string } {
       return { ok: false, message: "无法读取 Terminal 启动 Profile。" };
     }
 
-    execSync(
-      `/usr/libexec/PlistBuddy -c "Set :'Window Settings':${theme}:useOptionAsMetaKey true" "${TERMINAL_PLIST}"`,
+    execFileSync(
+      "/usr/libexec/PlistBuddy",
+      ["-c", `Set :'Window Settings':'${theme}':useOptionAsMetaKey true`, TERMINAL_PLIST],
     );
 
     return {

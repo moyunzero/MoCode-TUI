@@ -24,9 +24,9 @@ export function getNewlineHint(): NewlineHint {
     return { submit: "↵", newline: "⇧↵", note: "Ctrl+J" };
   }
 
-  const note = isAppleTerminal()
-    ? "⌥↵ 需 bun run dev:cli -- --terminal-setup"
-    : "⌥↵";
+  const program = process.env.TERM_PROGRAM ?? "";
+  const note =
+    isAppleTerminal() || program === "vscode" ? undefined : "⌥↵";
 
   return { submit: "↵", newline: "Ctrl+J", note };
 }
