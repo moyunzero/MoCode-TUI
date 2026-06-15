@@ -1,0 +1,60 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Who produced a message in the chat transcript.
+enum Role {
+  USER
+  ASSISTANT
+  ERROR
+}
+
+// Agent operating mode selected for a message (build vs plan-only).
+enum Mode {
+  BUILD
+  PLAN
+}
+
+// Whether an assistant response finished normally or was cut off mid-stream.
+enum MessageStatus {
+  COMPLETE
+  INTERRUPTED
+}
+
+// A single chat workspace scoped to one user and optional project directory.
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  cwd       String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  Message[]
+  @@index([userId])
+}
+
+// One turn in a session. `parts` stores structured stream chunks (tool calls, reasoning).
+model Message {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      Role
+  content   String
+  model     String
+  mode      Mode
+  status    MessageStatus
+  parts     Json?
+  duration  Int?
+  createdAt DateTime @default(now())
+  @@index([sessionId])
+}
