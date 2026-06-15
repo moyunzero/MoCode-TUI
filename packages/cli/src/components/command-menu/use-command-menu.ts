@@ -1,9 +1,13 @@
-import { useMemo, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { getFilteredCommands } from "./filter-commands";
 import type { Command } from "./types";
 import { useKeyboardLayer } from "../../providers/keyboard-layer";
+import { scrollIndexIntoView, visibleItemCount } from "../../utils/list-scroll-nav";
+
+/** Max rows shown before the list scrolls. */
+const MAX_VISIBLE_ITEMS = 8;
 
 type UseCommandMenuReturn = {
     showCommandMenu: boolean;
@@ -33,6 +37,14 @@ export function useCommandMenu():UseCommandMenuReturn {
     const commandQuery = showCommandMenu && textValue.startsWith("/") ? textValue.slice(1) : "";
 
     const filteredCommands = useMemo(()=>getFilteredCommands(commandQuery),[commandQuery]);
+    const pageSize = visibleItemCount(filteredCommands.length, MAX_VISIBLE_ITEMS);
+
+    useLayoutEffect(() => {
+        if (!showCommandMenu) return;
+        const scrollbox = scrollRef.current;
+        if (!scrollbox || filteredCommands.length === 0) return;
+        scrollIndexIntoView(scrollbox, selectedIndex, pageSize);
+    }, [showCommandMenu, selectedIndex, filteredCommands.length, pageSize]);
 
     const handleContentChange = (text:string) => {
         setTextValue(text);
@@ -75,30 +87,14 @@ export function useCommandMenu():UseCommandMenuReturn {
             close();
         }else if(key.name === "up") {
             key.preventDefault();
-            setSelectedIndex((i:number)=>{
-                const newIndex = Math.max(0,i-1);
-                const scrollbox = scrollRef.current;
-                if(scrollbox && newIndex < scrollbox.scrollTop) {
-                    scrollbox.scrollTo(newIndex);
-                }
-                return newIndex;
-            });
+            setSelectedIndex((i:number)=>Math.max(0,i-1));
         }else if (key.name === "down") {
             key.preventDefault();
             setSelectedIndex((i:number)=>{
                 if(filteredCommands.length === 0){
                     return 0
                 }
-                const newIndex = Math.min(filteredCommands.length-1,i+1);
-                const scrollbox = scrollRef.current;
-                if(scrollbox){
-                    const viewportHeight = scrollbox.viewport.height;
-                    const visibleEnd = scrollbox.scrollTop + viewportHeight -1;
-                    if(newIndex > visibleEnd){
-                        scrollbox.scrollTo(newIndex-viewportHeight+1);
-                    }
-                }
-                return newIndex;
+                return Math.min(filteredCommands.length-1,i+1);
             });
         }
         

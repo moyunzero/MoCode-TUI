@@ -31,9 +31,12 @@ export const ThemeDialogContent = () => {
     setTheme(theme, { persist: false });
    },[setTheme]);
 
+   const initialSelectedIndex = THEMES.findIndex((t) => t.name === originalThemeRef.current.name);
+
    return(
     <DialogSearchList
         items={THEMES}
+        initialSelectedIndex={Math.max(0, initialSelectedIndex)}
         onSelect={handleSelect}
         onHighlight={handleHighlight}
         filterFn={(theme,query)=>theme.name.toLowerCase().includes(query.toLowerCase())}
