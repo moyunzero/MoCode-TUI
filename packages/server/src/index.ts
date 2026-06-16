@@ -6,17 +6,22 @@ import * as Sentry from "@sentry/hono/bun";
 
 const app = new Hono();
 
-// Capture request traces, errors, and structured logs for the Bun server.
-app.use(
-    sentry(app, {
-      dsn: "https://87e73e1037e7b8bb4b5c0dfd951d366c@o4511343317549056.ingest.us.sentry.io/4511573394718720",
-      tracesSampleRate: 1.0,
-      enableLogs: true,
-      // To disable sending user data and HTTP bodies, uncomment the line below. For more info visit:
-      // https://docs.sentry.io/platforms/javascript/guides/hono/configuration/options/#dataCollection
-      // dataCollection: { userInfo: false, httpBodies: [] },
-    }),
-);
+const sentryDsn = process.env.SENTRY_DSN;
+const tracesSampleRate = Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "1.0");
+
+// Capture request traces, errors, and structured logs when Sentry is configured.
+if (sentryDsn) {
+    app.use(
+        sentry(app, {
+            dsn: sentryDsn,
+            tracesSampleRate: Number.isFinite(tracesSampleRate) ? tracesSampleRate : 1.0,
+            enableLogs: true,
+            // To disable sending user data and HTTP bodies, uncomment the line below. For more info visit:
+            // https://docs.sentry.io/platforms/javascript/guides/hono/configuration/options/#dataCollection
+            // dataCollection: { userInfo: false, httpBodies: [] },
+        }),
+    );
+}
 
 // Manual smoke-test route to verify Sentry log, metric, and error ingestion in development.
 // app.get("/debug-sentry", () => {
