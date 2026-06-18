@@ -115,4 +115,4 @@ export type ModelPricing = {
   }
   
   /** Default model when the session UI does not expose an explicit picker yet. */
-  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gemini-2.5-flash";
+  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "openai/gpt-oss-120b:free";

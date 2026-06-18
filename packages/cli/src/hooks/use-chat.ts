@@ -250,7 +250,7 @@ export function useChat(
                                 parts: [...parts],
                             }
                         ]);
-                        break;
+                        return;
                     }
                     case "error":{
                         // Server persisted ERROR row; surface message in the transcript.
@@ -262,7 +262,7 @@ export function useChat(
                                 content: event.message,
                             }
                         ]);
-                        break;
+                        return;
                     }
                 }
             }catch(err){

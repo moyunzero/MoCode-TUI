@@ -52,7 +52,7 @@ export function BotMessage({
                             {mode===Mode.PLAN? "Plan":"Build"}
                         </text>
                         <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
-                            >
+                            {">"}
                         </text>
                         <text attributes={TextAttributes.DIM} >
                             {model}
@@ -61,7 +61,7 @@ export function BotMessage({
                             (duration || interrupted) && (
                                 <>
                                     <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
-                                        >
+                                        {">"}
                                     </text>
                                     <text attributes={TextAttributes.DIM} >
                                         {interrupted ? "interrupted" : duration}

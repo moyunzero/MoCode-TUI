@@ -106,7 +106,7 @@ function resolveSupportedChatModel(model: SupportedChatModel): ResolvedModel {
 
 /** Type guard used by chat route Zod validation and resume model checks. */
 export function isSupportedChatModel(modelId: string): modelId is SupportedChatModelId {
-    return findSupportedChatModel(modelId) !== null;
+    return findSupportedChatModel(modelId) != null;
 }
 
 /** Looks up catalog entry and returns the bound SDK model (throws if unknown). */
