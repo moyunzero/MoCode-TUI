@@ -3,18 +3,23 @@ import type { ReactNode } from "react";
 import { InputBar } from "./input-bar";
 import { Spinner } from "./spinner";
 
+/** Session layout: scrollable transcript, input bar, and status footer. */
 type Props = {
     children?: ReactNode;
     onSubmit : (text: string) => void;
     inputDisabled?: boolean;
+    /** Shows spinner in the footer while the assistant is streaming. */
     loading?: boolean;
+    /** When true with loading, shows "esc to interrupt" hint. */
+    interruptible?: boolean;
 }
 
 export function SessionShell({ 
     children, 
     onSubmit, 
     inputDisabled = false, 
-    loading = false 
+    loading = false ,
+    interruptible = false,
 }: Props){
     return (
         <box 
@@ -32,6 +37,7 @@ export function SessionShell({
                 stickyScroll
                 stickyStart="bottom"
             >
+                {/* Keep the latest message in view as the transcript grows. */}
                 <box gap={1}>
                     {children}
                 </box>
@@ -53,9 +59,12 @@ export function SessionShell({
                     alignItems="center"
                     gap={2}
                 >
-                    {loading ? 
-                        <Spinner />:null
-                    }
+                    {loading ? (
+                        <>
+                            <Spinner />
+                            {interruptible ?<text>esc to interrupt</text>:null}
+                        </>
+                    ):null}
                 </box>
                 <box
                     flexDirection="row"

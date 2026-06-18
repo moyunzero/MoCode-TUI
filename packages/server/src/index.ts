@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import sessions from "./routes/sessions";
 import { sentry } from "@sentry/hono/bun";
 import * as Sentry from "@sentry/hono/bun";
+import chat from "./routes/chat";
 
 const app = new Hono();
 
@@ -57,7 +58,8 @@ app.onError((err, c) => {
     return c.json({ error: "Internal Server Error" }, 500);
 });
 
-const routes = app.route("/sessions", sessions);
+// Session CRUD plus SSE chat under /chat/:sessionId.
+const routes = app.route("/sessions", sessions).route("/chat", chat);
 
 /** Exported for type-safe Hono RPC client generation in the CLI. */
 export type AppType = typeof routes;

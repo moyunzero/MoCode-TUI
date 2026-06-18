@@ -26,12 +26,13 @@ export const messagePartsSchema = z.array(messagePartSchema);
 
 export type MessagePart = z.infer<typeof messagePartSchema>;
 
-/** Wire format for SSE chunks from the chat endpoint (future streaming integration). */
+/** Wire format for SSE chunks from POST /chat and /chat/:id/resume. */
 export const chatStreamEventSchema = z.discriminatedUnion("type", [
     z.object({
         type: z.literal("text-delta"),
         text: z.string(),
     }),
+    // Reserved for future streaming UI; client currently ignores these event types.
     z.object({
         type: z.literal("reasoning-delta"),
         text: z.string(),

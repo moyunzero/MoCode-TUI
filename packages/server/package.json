@@ -7,14 +7,25 @@
         ".": "./src/index.ts"
     },
     "scripts": {
-        "dev": "bun run --hot src/index.ts"
+        "dev": "bun run --hot src/index.ts",
+        "build": "bun build src/index.ts --outdir dist --target bun",
+        "postinstall": "bun run --cwd ../database db:generate",
+        "test:providers": "bun run scripts/test-providers.ts"
     },
     "dependencies": {
+        "@ai-sdk/anthropic": "^3.0.85",
+        "@ai-sdk/cerebras": "^2.0.51",
+        "@ai-sdk/gateway": "^3.0.133",
+        "@ai-sdk/google": "^3.0.30",
+        "@ai-sdk/groq": "^3.0.21",
+        "@ai-sdk/openai": "^3.0.72",
+        "@openrouter/ai-sdk-provider": "^1.2.0",
         "@hono/zod-validator": "^0.8.0",
         "@mocode/database": "workspace:*",
         "@mocode/shared": "workspace:*",
         "@sentry/bun": "^10.58.0",
         "@sentry/hono": "^10.58.0",
+        "ai": "^6.0.207",
         "dotenv": "^17.4.2",
         "hono": "^4.12.25",
         "zod": "^4.4.3"

@@ -1,26 +1,75 @@
 import { useTheme } from "../../providers/theme";
 import { EmptyBorder } from "../border";
+import type { ClientMessagePart } from "../../hooks/use-chat";
+import { Mode } from "@mocode/database/enums";
+import { TextAttributes } from "@opentui/core";
 
+/** Renders assistant output plus mode/model metadata footer. */
 type Props = {
-    content: string;
+    parts: ClientMessagePart[];
     model: string;
+    mode: Mode;
+    duration?: string;
+    /** True while tokens are still arriving (live row below transcript). */
+    streaming?: boolean;
+    /** True when the user interrupted before the server sent `done`. */
+    interrupted?: boolean;
 }
 
-export function BotMessage({ content, model }: Props){
+export function BotMessage({ 
+    parts,
+    model,
+    mode,
+    duration,
+    streaming = false,
+    interrupted = false,
+ }: Props){
     const { colors } = useTheme();
+    const text = parts.filter((p)=> p.type === "text").map((p)=> p.text).join("");
 
     return (
         <box width="100%" alignItems="center">
             <box paddingY={1} width="100%">
                 <box paddingX={3} width="100%">
-                    <text >{content}</text>
+                    <text >{text}</text>
                 </box>
             </box>
 
             <box paddingX={3} paddingBottom={1} gap={1} width="100%">
                 <box flexDirection="row" gap={2}>
-                    <text fg={colors.primary}>◉</text>
-                    <text>{model}</text>
+                    {/* Mode indicator: dimmed when the reply was cut short. */}
+                    <text
+                        attributes={interrupted ? TextAttributes.DIM : 0}
+                        fg={interrupted? undefined : mode === Mode.PLAN ? colors.planMode : colors.primary}
+                    >
+                      ◉
+                    </text>
+                    
+                    <box flexDirection="row" gap={1}>
+                        <text
+                            attributes={interrupted ? TextAttributes.DIM : 0}
+                        >
+                            {mode===Mode.PLAN? "Plan":"Build"}
+                        </text>
+                        <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
+                            >
+                        </text>
+                        <text attributes={TextAttributes.DIM} >
+                            {model}
+                        </text>
+                        { 
+                            (duration || interrupted) && (
+                                <>
+                                    <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
+                                        >
+                                    </text>
+                                    <text attributes={TextAttributes.DIM} >
+                                        {interrupted ? "interrupted" : duration}
+                                    </text>
+                                </>
+                            )
+                        }
+                    </box>
                 </box>
             </box>
         </box>
