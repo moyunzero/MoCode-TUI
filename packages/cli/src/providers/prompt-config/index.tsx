@@ -39,10 +39,9 @@ export function PromptConfigProvider(
     const [mode,setMode] = useState<Mode>(Mode.BUILD);
     const [model,setModel] = useState<SupportedChatModelId>(DEFAULT_CHAT_MODEL_ID);
 
-    // Read current mode in the callback dep so Tab always toggles the latest value.
     const toggleMode = useCallback(()=>{
-        setMode(mode === Mode.BUILD ? Mode.PLAN : Mode.BUILD);
-    },[mode]);
+        setMode((prev)=> (prev === Mode.BUILD ? Mode.PLAN : Mode.BUILD));
+    },[]);
 
     return(
         <PromptConfigContext.Provider 

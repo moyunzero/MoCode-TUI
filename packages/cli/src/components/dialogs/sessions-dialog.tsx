@@ -26,6 +26,7 @@ export const SessionDialogContent = ()=>{
     useEffect(()=>{
         let ignore = false;
         const fetchSessions = async ()=>{
+            if(!ignore) setLoading(true);
             try{
                 const response = await apiClient.sessions.$get();
                
@@ -33,7 +34,6 @@ export const SessionDialogContent = ()=>{
                 const data = await response.json();
                 if(!ignore) {
                     setSessions(data);
-                    setLoading(false);
                 }
             }catch(error){
                 if(!ignore) {
@@ -44,6 +44,8 @@ export const SessionDialogContent = ()=>{
                     // Dismiss the dialog so the user isn't stuck on an empty list.
                     close()
                 }
+            } finally {
+                if(!ignore) setLoading(false);
             }
         };
         fetchSessions();
