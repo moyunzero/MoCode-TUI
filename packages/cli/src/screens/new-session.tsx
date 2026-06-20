@@ -3,14 +3,16 @@ import { useNavigate,useLocation } from "react-router";
 import { UserMessage } from "../components/messages";
 import { SessionShell } from "../components/session-shell";
 import { z } from "zod";
-import { DEFAULT_CHAT_MODEL_ID } from "@mocode/shared";
 import { useToast } from "../providers/toast";
 import { apiClient } from "../lib/api-client";
 import { getErrorMessage } from "../lib/http-errors";
+import { Mode } from "@mocode/database/enums";
 
 /** Router state passed from the home screen when the user submits a prompt. */
 const newSessionStateSchema = z.object({
     message: z.string(),
+    mode: z.enum(Mode),
+    model: z.string(),
 });
 
 export function NewSession() {
@@ -41,12 +43,13 @@ export function NewSession() {
                 const response = await apiClient.sessions.$post({
                     json:{
                         title:state.message.slice(0,100),
+                        // cwd enables agent tools on the server for this session.
                         cwd:process.cwd(),
                         initialMessage:{
                             role:"USER",
                             content:state.message,
-                            model:DEFAULT_CHAT_MODEL_ID,
-                            mode:"BUILD",
+                            model:state.model,
+                            mode:state.mode,
                         },
                     },
                 });
@@ -78,7 +81,10 @@ export function NewSession() {
             inputDisabled 
             loading
         >
-            <UserMessage message={state.message} />
+            <UserMessage 
+                message={state.message} 
+                mode={state.mode} 
+            />
         </SessionShell>
     )
 }

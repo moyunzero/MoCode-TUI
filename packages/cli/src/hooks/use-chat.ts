@@ -1,6 +1,10 @@
 /**
  * Client-side chat state for a single session.
  *
+ * Phase 8: streams are no longer text-only. The hook accumulates
+ * {@link ClientMessagePart} segments (text, reasoning, tool-call) from SSE and
+ * renders them live via `streaming.parts` until `done` or interrupt.
+ *
  * Owns the message list, live streaming buffer, and lifecycle of in-flight SSE
  * requests. Each stream is keyed by a `requestId` so stale responses from
  * aborted or superseded requests are ignored safely.
@@ -17,8 +21,21 @@ import {
     type SupportedChatModelId
 } from "@mocode/shared";
 
-/** Minimal part shape rendered by {@link BotMessage}; text-only for now. */
-export type ClientMessagePart = { type: "text"; text:string };
+/** Tool invocation segment; `status` tracks in-flight vs completed tool execution. */
+export type ClientToolCallPart = {
+    type: "tool-call";
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    result?: string;
+    status: "calling" | "done";
+}
+
+/** Ordered segments mirroring server Message.parts (+ client-only tool status). */
+export type ClientMessagePart = 
+| { type: "text"; text:string }
+| ClientToolCallPart
+| { type: "reasoning"; text:string };
 
 /** Discriminated union of all messages shown in the session transcript. */
 export type Message = 
@@ -184,7 +201,8 @@ export function useChat(
 
     /**
      * Parses SSE frames from the Hono client response and maps them to transcript
-     * updates. Coalesces adjacent `text-delta` events into a single text part.
+     * updates. Coalesces adjacent deltas of the same type into one part (text,
+     * reasoning). Tool-call/result pairs are linked by toolCallId.
      */
     const handleStream = useCallback(async(
         response: ClientResponse<unknown>,
@@ -218,6 +236,42 @@ export function useChat(
                 const event = chatStreamEventSchema.parse(JSON.parse(data));
 
                 switch (event.type){
+                    case "reasoning-delta":{
+                        // Same coalescing strategy as server-side parts accumulation.
+                        const last = parts[parts.length - 1];
+                        if(last && last.type === "reasoning"){
+                            last.text += event.text;
+                        }else{
+                            parts.push({ type: "reasoning", text: event.text });
+                        }
+                        emitParts(activeStream.requestId, parts);
+                        break;
+                    }
+
+                    case "tool-call":{
+                        // Shown immediately with status "calling"; result arrives in tool-result.
+                        parts.push({
+                            type: "tool-call",
+                            id: event.toolCallId,
+                            name: event.toolName,
+                            args: event.args,
+                            status: "calling",
+                        });
+                        emitParts(activeStream.requestId, parts);
+                        break;
+                    }
+
+                    case "tool-result":{
+                        // Attach output to the pending tool-call part for BotMessage rendering.
+                        const tcPart = parts.find((p): p is ClientToolCallPart => p.type === "tool-call" && p.id === event.toolCallId);
+                        if(tcPart){
+                            tcPart.result = event.result;
+                            tcPart.status = "done";
+                        }
+                        emitParts(activeStream.requestId, parts);
+                        break;
+                    }
+
                     case "text-delta":{
                         // Merge consecutive deltas into one part to reduce re-renders.
                         const last = parts[parts.length - 1];

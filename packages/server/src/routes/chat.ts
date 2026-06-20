@@ -1,6 +1,11 @@
 /**
  * Chat HTTP routes: submit a user turn and stream the assistant reply via SSE.
  *
+ * Phase 8 extends the stream with:
+ * - Multi-step agent loop via `streamText({ tools, stopWhen: stepCountIs(50) })`
+ * - Reasoning, tool-call, and tool-result SSE events (mirrored in Message.parts)
+ * - System prompt and cwd-scoped tools when session.cwd is set
+ *
  * Persists USER / ASSISTANT / ERROR rows to the database. Interrupted streams
  * (client disconnect or abort) save partial ASSISTANT content with INTERRUPTED
  * status. Resume replays generation when the last stored message is USER-only.
@@ -9,12 +14,19 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { streamSSE } from "hono/streaming";
-import { streamText as aiStreamText } from "ai";
+import { streamText as aiStreamText, stepCountIs } from "ai";
 import { db } from "@mocode/database/client";
 import { Mode, MessageStatus } from "@mocode/database/enums";
-import { type ChatStreamEvent } from "@mocode/shared";
+import { 
+    type ChatStreamEvent,
+    type MessagePart,
+    toolCallArgsSchema,
+    messagePartsSchema,
+ } from "@mocode/shared";
 import { isSupportedChatModel, resolveChatModel } from "../lib/model";
-
+import type { Prisma } from "@mocode/database";
+import { createTools } from "../tools";
+import { buildSystemPrompt } from "../system-prompt";
 
 const submitSchema = z.object({
     content: z.string(),
@@ -78,6 +90,8 @@ function getResumableUserMessage(
 type StreamParams = {
     sessionId: string;
     model: string;
+    /** Session working directory; when null, tools are disabled (plain chat only). */
+    cwd: string | null;
     history: {
         role: "user" | "assistant";
         content: string;
@@ -87,24 +101,43 @@ type StreamParams = {
 }  
 
 /**
- * Runs `streamText`, forwards `text-delta` chunks as SSE, then persists the
- * final assistant row or handles abort/error paths.
+ * Runs the agent loop via `streamText`, forwards stream chunks as SSE, then persists
+ * the final assistant row (or handles abort/error paths).
+ *
+ * Accumulates {@link MessagePart} segments in `parts` while iterating `fullStream`:
+ * - reasoning-delta → coalesced reasoning parts + SSE
+ * - text-delta → coalesced text parts + SSE (also joined into Message.content)
+ * - tool-call / tool-result → structured tool parts + SSE
+ *
+ * `Message.content` remains plain assistant text for backward-compatible history;
+ * rich segments live in `Message.parts` JSON.
  */
 async function streamAIResponse(
     stream:Parameters<Parameters<typeof streamSSE>[1]>[0],
     params: StreamParams
 ){
-    const { sessionId, model, history, mode, abortController } = params;
+    const { sessionId, model, history, mode, abortController, cwd } = params;
 
     const startTime = Date.now();
     const resolvedModel = resolveChatModel(model);
-    let fullText = "";
+    /** Ordered segments persisted to Message.parts and mirrored on the wire. */
+    const parts: MessagePart[] = [];
+    /** Undefined when cwd is missing — agent runs in text-only mode without tools. */
+    const tools = cwd ? createTools(cwd, mode) : undefined;
 
     /** Writes partial output when the client disconnects before `done`. */
     const persistInterruptedMessage = async ()=>{
-        if(fullText.length === 0 ) return;
+
+        // content column = concatenated text parts only (reasoning/tools omitted).
+        const fullText = parts
+            .filter((p)=> p.type === "text")
+            .map((p)=> p.text)
+            .join("");
+
+        if(fullText.length === 0 && parts.length === 0) return;
 
         const elapsedMs = Date.now() - startTime;
+        const validateParts: Prisma.InputJsonValue | undefined = parts.length > 0 ? messagePartsSchema.parse(parts) : undefined;
 
         await db.message.create({
             data:{
@@ -114,6 +147,7 @@ async function streamAIResponse(
                 content: fullText,
                 model,
                 mode,
+                parts: validateParts,
                 duration: Math.round(elapsedMs/1000), // seconds in DB; see `done.durationMs` on wire
             }
         })
@@ -124,12 +158,42 @@ async function streamAIResponse(
             model: resolvedModel.model,
             messages:history,
             abortSignal: abortController.signal,
+            providerOptions: resolvedModel.providerOptions,
+            tools,
+            system: buildSystemPrompt({cwd, mode}),
+            // Cap agent steps to avoid runaway tool loops; only applied when tools exist.
+            stopWhen: tools ? stepCountIs(50) : undefined,
         });
         
         for await (const chunk of result.fullStream){
             if(stream.aborted) break;
+
+            // Provider-native thinking/reasoning tokens (Anthropic, OpenAI, Gemini, etc.).
+            if(chunk.type === "reasoning-delta"){
+                const last = parts[parts.length - 1];
+                if(last && last.type === "reasoning"){
+                    last.text += chunk.text;
+                }else{
+                    parts.push({ type: "reasoning", text: chunk.text });
+                }
+                const event: ChatStreamEvent = {
+                    type: "reasoning-delta",
+                    text: chunk.text,
+                }
+                await stream.writeSSE({
+                    event: "reasoning-delta",
+                    data: JSON.stringify(event)
+                })
+            }
+            
             if(chunk.type === "text-delta"){
-                fullText += chunk.text;
+                const last = parts[parts.length - 1];
+                if(last && last.type === "text"){
+                    last.text += chunk.text;
+                }else{
+                    parts.push({ type: "text", text: chunk.text });
+                }
+
                 const event: ChatStreamEvent = {
                     type: "text-delta",
                     text: chunk.text,
@@ -140,6 +204,53 @@ async function streamAIResponse(
                     data: JSON.stringify(event)
                 });     
             }
+
+            if(chunk.type === "tool-call"){
+                const args = toolCallArgsSchema.parse(chunk.input);
+                parts.push({
+                    type: "tool-call",
+                    id: chunk.toolCallId,
+                    name: chunk.toolName,
+                    args,
+                });
+
+                // Result is attached later when the matching tool-result chunk arrives.
+                const event: ChatStreamEvent = {
+                    type: "tool-call",
+                    toolCallId: chunk.toolCallId,
+                    toolName: chunk.toolName,
+                    args,
+                }
+                await stream.writeSSE({
+                    event: "tool-call",
+                    data: JSON.stringify(event)
+                })
+            }
+
+
+            if(chunk.type === "tool-result"){
+                const resultStr = typeof chunk.output === "string" ? chunk.output : JSON.stringify(chunk.output);
+
+                // Merge result into the tool-call part so DB reload has a single structured row.
+                const tcPart = parts.find(
+                    (p): p is Extract<MessagePart, { type: "tool-call" }> =>
+                        p.type === "tool-call" && p.id === chunk.toolCallId
+                );
+                if(tcPart){
+                    tcPart.result = resultStr;
+                }
+
+                const event: ChatStreamEvent = {
+                    type: "tool-result",
+                    toolCallId: chunk.toolCallId,
+                    result: resultStr,
+                }
+                await stream.writeSSE({
+                    event: "tool-result",
+                    data: JSON.stringify(event)
+                })
+            }
+
             if(chunk.type === "error"){
                 throw chunk.error;
             }
@@ -150,6 +261,13 @@ async function streamAIResponse(
         }
 
         const elapsedMs = Date.now() - startTime;
+        const fullText = parts
+            .filter((p)=> p.type === "text")
+            .map((p)=> p.text)
+            .join("");
+
+        const validateParts: Prisma.InputJsonValue | undefined = parts.length > 0 ? messagePartsSchema.parse(parts) : undefined;
+
         const assistantMessage = await db.message.create({
             data:{
                 sessionId,
@@ -158,6 +276,7 @@ async function streamAIResponse(
                 model,
                 mode,
                 status: MessageStatus.COMPLETE,
+                parts: validateParts,
                 // Message.duration is stored in whole seconds; SSE `done` uses milliseconds.
                 duration: Math.round(elapsedMs/1000),
             }
@@ -249,6 +368,7 @@ const app = new Hono()
                         await streamAIResponse(stream, {
                             sessionId,
                             model: resumableMessage.model,
+                            cwd: session.cwd,
                             history,
                             mode: resumableMessage.mode,
                             abortController,
@@ -331,6 +451,7 @@ const app = new Hono()
                 await streamAIResponse(stream, {
                     sessionId,
                     model: data.model,
+                    cwd: session.cwd,
                     history,
                     mode: data.mode,
                     abortController,
