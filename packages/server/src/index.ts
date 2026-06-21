@@ -4,6 +4,8 @@ import sessions from "./routes/sessions";
 import { sentry } from "@sentry/hono/bun";
 import * as Sentry from "@sentry/hono/bun";
 import chat from "./routes/chat";
+import auth from "./routes/auth";
+import { requireAuth } from "./middleware/require-auth";
 
 const app = new Hono();
 
@@ -58,8 +60,15 @@ app.onError((err, c) => {
     return c.json({ error: "Internal Server Error" }, 500);
 });
 
-// Session CRUD plus SSE chat under /chat/:sessionId.
-const routes = app.route("/sessions", sessions).route("/chat", chat);
+// Phase 9: protect data routes; /auth/callback stays public for OAuth relay.
+app.use("/sessions", requireAuth);
+app.use("/chat", requireAuth);
+
+// Public OAuth relay at /auth/callback; authenticated session/chat routes below.
+const routes = app
+    .route("/auth", auth)
+    .route("/sessions", sessions)
+    .route("/chat", chat);
 
 /** Exported for type-safe Hono RPC client generation in the CLI. */
 export type AppType = typeof routes;

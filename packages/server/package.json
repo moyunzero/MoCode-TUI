@@ -21,6 +21,7 @@
         "@ai-sdk/groq": "^3.0.21",
         "@ai-sdk/openai": "^3.0.72",
         "@ai-sdk/provider-utils": "^4.0.30",
+        "@clerk/backend": "^3.8.2",
         "@hono/zod-validator": "^0.8.0",
         "@mocode/database": "workspace:*",
         "@mocode/shared": "workspace:*",

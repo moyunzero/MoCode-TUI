@@ -7,6 +7,10 @@ import {
 } from "../dialogs";
 import { SUPPORTED_CHAT_MODELS } from "@mocode/shared";
 
+// Phase 9: browser OAuth login and local token lifecycle.
+import { performLogin } from "../../lib/oauth";
+import { clearAuth } from "../../lib/auth";
+
 /** Slash-command registry. Each entry may define an `action` that receives toast/dialog/exit context. */
 export const COMMANDS: Command[] = [
   {
@@ -70,14 +74,25 @@ export const COMMANDS: Command[] = [
       });
     },
   },
+  // --- Authentication (phase 9) ---
   {
     name: "login",
     description: "Sign in with your browser",
     value: "/login",
-    action: (ctx) => {
-      ctx.toast.show({
-        message: "Opening login page...",
-      });
+    action: async (ctx) => {
+      ctx.toast.show({ message: "Opening browser to sign in..." });
+
+      try {
+        // PKCE OAuth via Clerk; token persisted to ~/.mocode/auth.json on success.
+        await performLogin();
+        ctx.toast.show({ variant: "success", message: "Signed in" });
+      } catch (error) {
+        const message = error instanceof Error 
+          ? error.message 
+          : "Sign in failed or timed out";
+
+        ctx.toast.show({ variant: "error", message });
+      }
     },
   },
   {
@@ -85,9 +100,9 @@ export const COMMANDS: Command[] = [
     description: "Sign out of your account",
     value: "/logout",
     action: (ctx) => {
-      ctx.toast.show({
-        message: "Logging out...",
-      });
+      // Local sign-out only; no server-side session revocation yet.
+      clearAuth();
+      ctx.toast.show({ variant: "success", message: "Signed out" });
     },
   },
   {

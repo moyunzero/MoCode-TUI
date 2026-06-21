@@ -6,7 +6,7 @@ import { findSupportedChatModel } from "@mocode/shared";
 import { db } from "@mocode/database/client";
 import { Role, Mode, MessageStatus } from "@mocode/database/enums";
 import * as Sentry from "@sentry/hono/bun";
-
+import type { AuthenticatedEnv } from "../middleware/require-auth";
 
 /** POST /sessions body: session metadata plus the first user turn. */
 const createSessionSchema = z.object({
@@ -32,9 +32,14 @@ const createSessionValidator = zValidator("json", createSessionSchema,(result,c)
     }
 });
 
-const app = new Hono()
+/** Session CRUD scoped to the authenticated Clerk user (phase 9). */
+const app = new Hono<AuthenticatedEnv>()
     .get("/", async (c)=>{
+        const userId = c.get("userId");
         const sessions = await db.session.findMany({
+            where: {
+                userId,
+            },
             orderBy: {
                 createdAt: "desc",
             },
@@ -54,9 +59,12 @@ const app = new Hono()
     })
     .get("/:id", async (c) => {
         const id = c.req.param("id");
+        const userId = c.get("userId");
+        // Composite key prevents cross-user session access by id guessing.
         const session = await db.session.findUnique({
             where: {
                 id,
+                userId,
             },
             include: {
                 messages: {
@@ -87,12 +95,11 @@ const app = new Hono()
     })
     .post("/", createSessionValidator, async (c) => {
         const { initialMessage, ...data } = c.req.valid("json");
-
+        const userId = c.get("userId");
         const session = await db.session.create({
             data: {
                 ...data,
-                // Auth is not wired yet; all sessions belong to a placeholder user.
-                userId: "mock-user",
+                userId,
                 messages: {
                     create: {
                         ...initialMessage,

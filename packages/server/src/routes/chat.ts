@@ -6,6 +6,9 @@
  * - Reasoning, tool-call, and tool-result SSE events (mirrored in Message.parts)
  * - System prompt and cwd-scoped tools when session.cwd is set
  *
+ * Phase 9 scopes every session lookup by `userId` from `requireAuth`, so users
+ * can only chat in sessions they own.
+ *
  * Persists USER / ASSISTANT / ERROR rows to the database. Interrupted streams
  * (client disconnect or abort) save partial ASSISTANT content with INTERRUPTED
  * status. Resume replays generation when the last stored message is USER-only.
@@ -27,6 +30,7 @@ import { isSupportedChatModel, resolveChatModel } from "../lib/model";
 import type { Prisma } from "@mocode/database";
 import { createTools } from "../tools";
 import { buildSystemPrompt } from "../system-prompt";
+import type { AuthenticatedEnv } from "../middleware/require-auth";
 
 const submitSchema = z.object({
     content: z.string(),
@@ -320,13 +324,15 @@ async function streamAIResponse(
     }
 }
 
-const app = new Hono()
+const app = new Hono<AuthenticatedEnv>()
     /** Resume generation for the last unanswered user message (no new USER row). */
     .post("/:sessionId/resume",async(c)=>{
         const sessionId  = c.req.param("sessionId");
+        const userId = c.get("userId");
         const session = await db.session.findUnique({
             where: {
                 id: sessionId,
+                userId, // Must belong to the authenticated user
             },
             include: {
                 messages: {
@@ -400,10 +406,12 @@ const app = new Hono()
     /** Accept a user message, persist it, then stream the assistant reply. */
     .post("/:sessionId",submitValidator,async(c)=>{
         const sessionId  = c.req.param("sessionId");
-        
+        const userId = c.get("userId");
+
         const session = await db.session.findUnique({
             where: {
                 id: sessionId,
+                userId, // Must belong to the authenticated user
             },
             include: {
                 messages: {
