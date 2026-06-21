@@ -26,6 +26,7 @@
         "@mocode/database": "workspace:*",
         "@mocode/shared": "workspace:*",
         "@openrouter/ai-sdk-provider": "^2.9.1",
+        "@polar-sh/sdk": "^0.48.1",
         "@sentry/bun": "^10.58.0",
         "@sentry/hono": "^10.58.0",
         "ai": "^6.0.207",

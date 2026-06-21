@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/hono/bun";
 import chat from "./routes/chat";
 import auth from "./routes/auth";
 import { requireAuth } from "./middleware/require-auth";
+import billing from "./routes/billing";
 
 const app = new Hono();
 
@@ -61,12 +62,19 @@ app.onError((err, c) => {
 });
 
 // Phase 9: protect data routes; /auth/callback stays public for OAuth relay.
-app.use("/sessions", requireAuth);
-app.use("/chat", requireAuth);
+// Phase 10: billing checkout/portal require auth; /billing/success is public (browser redirect).
+// Use `/*` so nested routes (e.g. /chat/:sessionId/resume) are covered — bare
+// `/chat` only matches the exact path in Hono's router.
+app.use("/sessions/*", requireAuth);
+app.use("/chat/*", requireAuth);
+app.use("/billing/checkout", requireAuth);
+app.use("/billing/portal", requireAuth);
 
-// Public OAuth relay at /auth/callback; authenticated session/chat routes below.
+
+// Public OAuth relay at /auth/callback; authenticated session/chat/billing routes below.
 const routes = app
     .route("/auth", auth)
+    .route("/billing", billing)
     .route("/sessions", sessions)
     .route("/chat", chat);
 

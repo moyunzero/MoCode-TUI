@@ -7,9 +7,10 @@ import {
 } from "../dialogs";
 import { SUPPORTED_CHAT_MODELS } from "@mocode/shared";
 
-// Phase 9: browser OAuth login and local token lifecycle.
+// browser OAuth login and local token lifecycle.
 import { performLogin } from "../../lib/oauth";
 import { clearAuth } from "../../lib/auth";
+import { openUpgradeCheckout, openBillingPortal } from "../../lib/upgrade";
 
 /** Slash-command registry. Each entry may define an `action` that receives toast/dialog/exit context. */
 export const COMMANDS: Command[] = [
@@ -105,24 +106,45 @@ export const COMMANDS: Command[] = [
       ctx.toast.show({ variant: "success", message: "Signed out" });
     },
   },
+  // --- Billing (phase 10) ---
   {
     name: "upgrade",
     description: "Buy more credits",
     value: "/upgrade",
-    action: (ctx) => {
+    action: async (ctx) => {
       ctx.toast.show({
         message: "Opening credits checkout...",
       });
+      try{
+        // Opens Polar checkout in the system browser via POST /billing/checkout.
+        await openUpgradeCheckout();
+        ctx.toast.show({ variant: "success", message: "Checkout opened" });
+      }catch(error){
+        const message = error instanceof Error 
+          ? error.message 
+          : "Failed to open checkout";
+        ctx.toast.show({ variant: "error", message });
+      }
     },
   },
   {
     name: "usage",
     description: "Open billing portal in your browser",
     value: "/usage",
-    action: (ctx) => {
+    action: async(ctx) => {
       ctx.toast.show({
         message: "Opening billing portal...",
       });
+      try{
+        // Polar customer portal for invoices and payment method via POST /billing/portal.
+        await openBillingPortal();
+        ctx.toast.show({ variant: "success", message: "Billing portal opened" });
+      }catch(error){
+        const message = error instanceof Error 
+          ? error.message 
+          : "Failed to open billing portal";
+        ctx.toast.show({ variant: "error", message });
+      }
     },
   },
   {

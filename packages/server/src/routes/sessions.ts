@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { findSupportedChatModel } from "@mocode/shared";
 // Runtime client lives in a separate export so browser/CLI bundles can import types without pulling in Prisma.
 import { db } from "@mocode/database/client";
 import { Role, Mode, MessageStatus } from "@mocode/database/enums";
 import * as Sentry from "@sentry/hono/bun";
-import type { AuthenticatedEnv } from "../middleware/require-auth";
+import type { AuthenticatedEnv } from "../middleware/require-auth.ts";
+import { requireCreditsBalance } from "../middleware/require-credits-balance.ts";
+import { isSupportedChatModel } from "../lib/model.ts"; 
+
 
 /** POST /sessions body: session metadata plus the first user turn. */
 const createSessionSchema = z.object({
@@ -16,7 +18,7 @@ const createSessionSchema = z.object({
         role: z.enum(Role),
         content: z.string(),
         mode: z.enum(Mode),
-        model: z.string().refine((id) => !!findSupportedChatModel(id), "Invalid model"),
+        model: z.string().refine(isSupportedChatModel, "Invalid model"),
     }),
 });
 
@@ -93,7 +95,8 @@ const app = new Hono<AuthenticatedEnv>()
 
         return c.json(session);
     })
-    .post("/", createSessionValidator, async (c) => {
+    /** Phase 10: require positive Polar credits before creating a session (initial message is billable). */
+    .post("/", requireCreditsBalance, createSessionValidator, async (c) => {
         const { initialMessage, ...data } = c.req.valid("json");
         const userId = c.get("userId");
         const session = await db.session.create({

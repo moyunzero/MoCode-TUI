@@ -1,6 +1,6 @@
 /** Canonical list of chat models the CLI and API accept. Single source of truth for validation. */
 
-/** USD pricing per million tokens; used for cost display and budgeting. */
+/** USD pricing per million tokens; Phase 10 uses this for Polar credit conversion. */
 export type ModelPricing = {
     inputUsdPerMillionTokens: number;
     outputUsdPerMillionTokens: number;
@@ -18,6 +18,7 @@ export type ModelPricing = {
   type SupportedChatModelDefinition = {
     id: string;
     provider: SupportedProvider;
+    /** Per-model rates consumed by server `calculateCreditsForUsage`. */
     pricing: ModelPricing;
   };
   
@@ -99,8 +100,8 @@ export type ModelPricing = {
       id: "openai/gpt-oss-120b:free",
       provider: "openrouter",
       pricing: {
-        inputUsdPerMillionTokens: 0,
-        outputUsdPerMillionTokens: 0,
+        inputUsdPerMillionTokens: 0.1,
+        outputUsdPerMillionTokens: 0.1,
       },
     },
   ] as const satisfies readonly SupportedChatModelDefinition[];

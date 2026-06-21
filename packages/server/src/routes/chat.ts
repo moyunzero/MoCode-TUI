@@ -9,6 +9,11 @@
  * Phase 9 scopes every session lookup by `userId` from `requireAuth`, so users
  * can only chat in sessions they own.
  *
+ * Phase 10 bills usage after each assistant message (complete or interrupted):
+ * - `requireCreditsBalance` gates POST submit/resume when Polar balance <= 0
+ * - `onFinish` captures token usage → credits via {@link calculateCreditsForUsage}
+ * - {@link ingestAiUsage} reports to Polar with idempotent `chat-message:{id}` keys
+ *
  * Persists USER / ASSISTANT / ERROR rows to the database. Interrupted streams
  * (client disconnect or abort) save partial ASSISTANT content with INTERRUPTED
  * status. Resume replays generation when the last stored message is USER-only.
@@ -30,7 +35,12 @@ import { isSupportedChatModel, resolveChatModel } from "../lib/model";
 import type { Prisma } from "@mocode/database";
 import { createTools } from "../tools";
 import { buildSystemPrompt } from "../system-prompt";
-import type { AuthenticatedEnv } from "../middleware/require-auth";
+import type { AuthenticatedEnv } from "../middleware/require-auth.ts";
+
+import type { LanguageModelUsage } from "ai";
+import { requireCreditsBalance } from "../middleware/require-credits-balance";
+import { calculateCreditsForUsage } from "../lib/credits";
+import { ingestAiUsage } from "../lib/polar";
 
 const submitSchema = z.object({
     content: z.string(),
@@ -94,6 +104,7 @@ function getResumableUserMessage(
 type StreamParams = {
     sessionId: string;
     model: string;
+    userId: string;
     /** Session working directory; when null, tools are disabled (plain chat only). */
     cwd: string | null;
     history: {
@@ -103,6 +114,11 @@ type StreamParams = {
     mode: Mode;
     abortController: AbortController;
 }  
+
+type IngestUsageForMessageParams = {
+    messageId: string;
+    status: "complete" | "interrupted";
+}
 
 /**
  * Runs the agent loop via `streamText`, forwards stream chunks as SSE, then persists
@@ -120,12 +136,13 @@ async function streamAIResponse(
     stream:Parameters<Parameters<typeof streamSSE>[1]>[0],
     params: StreamParams
 ){
-    const { sessionId, model, history, mode, abortController, cwd } = params;
+    const { sessionId, model, history, mode, abortController, cwd, userId } = params;
 
     const startTime = Date.now();
     const resolvedModel = resolveChatModel(model);
     /** Ordered segments persisted to Message.parts and mirrored on the wire. */
     const parts: MessagePart[] = [];
+    let completedUsage: LanguageModelUsage | null = null;
     /** Undefined when cwd is missing — agent runs in text-only mode without tools. */
     const tools = cwd ? createTools(cwd, mode) : undefined;
 
@@ -143,7 +160,7 @@ async function streamAIResponse(
         const elapsedMs = Date.now() - startTime;
         const validateParts: Prisma.InputJsonValue | undefined = parts.length > 0 ? messagePartsSchema.parse(parts) : undefined;
 
-        await db.message.create({
+        return db.message.create({
             data:{
                 sessionId,
                 role: "ASSISTANT",
@@ -155,7 +172,45 @@ async function streamAIResponse(
                 duration: Math.round(elapsedMs/1000), // seconds in DB; see `done.durationMs` on wire
             }
         })
-    }
+    };
+
+    /** Converts captured usage to credits and ingests into Polar; logs on failure (non-blocking). */
+    const ingestUsageForMessage = async ({ messageId, status }: IngestUsageForMessageParams) => {
+        if (!completedUsage) return;
+    
+        try {
+          const billableUsage = calculateCreditsForUsage({
+            provider: resolvedModel.provider,
+            model: resolvedModel.modelId,
+            usage: completedUsage,
+          });
+    
+          await ingestAiUsage({
+            externalCustomerId: userId,
+            eventId: `chat-message:${messageId}`,
+            credits: billableUsage.credits,
+          });
+        } catch (error) {
+          console.error("Failed to ingest Polar AI usage for chat message", {
+            error,
+            sessionId,
+            messageId,
+            userId,
+          });
+        }
+      };
+    
+      /** Persists partial assistant row then bills tokens consumed before abort. */
+      const persistInterruptedMessageAndUsage = async () => {
+        const interruptedMessage = await persistInterruptedMessage();
+        if (!interruptedMessage) return;
+    
+        await ingestUsageForMessage({
+          messageId: interruptedMessage.id,
+          status: "interrupted",
+        });
+      };
+    
     
     try{
         const result = aiStreamText({
@@ -167,6 +222,10 @@ async function streamAIResponse(
             system: buildSystemPrompt({cwd, mode}),
             // Cap agent steps to avoid runaway tool loops; only applied when tools exist.
             stopWhen: tools ? stepCountIs(50) : undefined,
+            // Phase 10: totalUsage feeds credit calculation after stream ends.
+            onFinish(event){
+                completedUsage = event.totalUsage;
+            }
         });
         
         for await (const chunk of result.fullStream){
@@ -260,7 +319,7 @@ async function streamAIResponse(
             }
         }
         if(stream.aborted || abortController.signal.aborted ){
-            await persistInterruptedMessage();
+            await persistInterruptedMessageAndUsage();
             return;
         }
 
@@ -286,6 +345,11 @@ async function streamAIResponse(
             }
         });
 
+        await ingestUsageForMessage({
+            messageId: assistantMessage.id,
+            status: "complete",
+        });
+
         const doneEvent: ChatStreamEvent = {
             type: "done",
             messageId: assistantMessage.id,
@@ -297,7 +361,7 @@ async function streamAIResponse(
         })
     }catch(err){
         if(abortController.signal.aborted){
-            await persistInterruptedMessage();
+            await persistInterruptedMessageAndUsage();
             return;
         }
         const message = err instanceof Error ? err.message : "An unknown error occurred";
@@ -326,7 +390,7 @@ async function streamAIResponse(
 
 const app = new Hono<AuthenticatedEnv>()
     /** Resume generation for the last unanswered user message (no new USER row). */
-    .post("/:sessionId/resume",async(c)=>{
+    .post("/:sessionId/resume", requireCreditsBalance, async(c)=>{
         const sessionId  = c.req.param("sessionId");
         const userId = c.get("userId");
         const session = await db.session.findUnique({
@@ -374,6 +438,7 @@ const app = new Hono<AuthenticatedEnv>()
                     try{
                         await streamAIResponse(stream, {
                             sessionId,
+                            userId,
                             model: resumableMessage.model,
                             cwd: session.cwd,
                             history,
@@ -403,8 +468,8 @@ const app = new Hono<AuthenticatedEnv>()
             throw err;
         }
     })
-    /** Accept a user message, persist it, then stream the assistant reply. */
-    .post("/:sessionId",submitValidator,async(c)=>{
+    /** Accept a user message, persist it, then stream the assistant reply. Phase 10: credits gate. */
+    .post("/:sessionId",requireCreditsBalance ,submitValidator,async(c)=>{
         const sessionId  = c.req.param("sessionId");
         const userId = c.get("userId");
 
@@ -459,6 +524,7 @@ const app = new Hono<AuthenticatedEnv>()
                 });
                 await streamAIResponse(stream, {
                     sessionId,
+                    userId,
                     model: data.model,
                     cwd: session.cwd,
                     history,
