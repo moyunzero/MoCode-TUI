@@ -17,6 +17,7 @@ import { useDialog } from "../providers/dialog";
 import { useTheme } from "../providers/theme";
 import { usePromptConfig } from "../providers/prompt-config";
 import { Mode } from "@mocode/shared";
+import { runCommandAction } from "../lib/run-command-action";
 
 const MAX_VISIBLE_MENTIONS = 8;
 const CURRENT_DIRECTORY = process.cwd();
@@ -388,15 +389,19 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
     textarea.setText("");
 
     if (command.action) {
-      command.action({
-        exit: () => renderer.destroy(),
-        toast,
-        dialog,
-        navigate,
-        mode,
-        setMode,
-        setModel,
-      });
+      runCommandAction(
+        command.action,
+        {
+          exit: () => renderer.destroy(),
+          toast,
+          dialog,
+          navigate,
+          mode,
+          setMode,
+          setModel,
+        },
+        (message) => toast.show({ variant: "error", message }),
+      );
     } else {
       textarea.insertText(command.value + " ");
     }

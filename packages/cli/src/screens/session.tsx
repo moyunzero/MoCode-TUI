@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useLocation, useNavigate } from "react-router";
-import { z } from "zod";
 import { useKeyboard } from "@opentui/react";
 import { type ModeType, type SupportedChatModelId } from "@mocode/shared";
 import type { InferResponseType } from "hono/client";
@@ -17,6 +16,7 @@ import type { Message } from "../hooks/use-chat";
 import { apiClient } from "../lib/api-client";
 import { getErrorMessage } from "../lib/http-errors";
 import { useKeyboardLayer } from "../providers/keyboard-layer";
+import { parseInitialMessages, sessionLocationSchema } from "../lib/session-navigation";
 
 /**
  * Phase 11 session screen.
@@ -27,17 +27,6 @@ import { useKeyboardLayer } from "../providers/keyboard-layer";
  */
 
 type SessionData = InferResponseType<(typeof apiClient.sessions)[":id"]["$get"], 200>;
-
-const sessionLocationSchema = z.object({
-  session: z.custom<SessionData>((val) => val != null && typeof val === "object" && "id" in val),
-  initialPrompt: z
-    .object({
-      message: z.string(),
-      mode: z.custom<ModeType>(),
-      model: z.custom<SupportedChatModelId>(),
-    })
-    .optional(),
-});
 
 function ChatMessage(
   { msg }: {
@@ -71,7 +60,7 @@ function SessionChat({
   session: SessionData,
   initialPrompt?: { message: string; mode: ModeType; model: SupportedChatModelId };
 }) {
-  const [initialMessages] = useState(() => session.messages as unknown as Message[]);
+  const [initialMessages] = useState(() => parseInitialMessages(session.messages));
   const { mode, model } = usePromptConfig();
   const { isTopLayer } = useKeyboardLayer();
   const { messages, status, submit, abort, interrupt, error } = useChat(
@@ -127,7 +116,11 @@ export function Session() {
 
   const prefetched = useMemo(() => {
     const parsed = sessionLocationSchema.safeParse(location.state);
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) return null;
+    return {
+      session: parsed.data.session as SessionData,
+      initialPrompt: parsed.data.initialPrompt,
+    };
   }, [location.state]);
 
   const [session, setSession] = useState<SessionData | null>(prefetched?.session ?? null);

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /** Canonical list of chat models the CLI and API accept. Single source of truth for validation. */
 
 /** USD pricing per million tokens; Phase 10 uses this for Polar credit conversion. */
@@ -114,6 +116,12 @@ export type ModelPricing = {
   export function findSupportedChatModel(modelId: string) {
     return SUPPORTED_CHAT_MODELS.find((model) => model.id === modelId);
   }
+
+  /** Runtime validator for model ids from {@link SUPPORTED_CHAT_MODELS}. */
+  export const supportedChatModelIdSchema = z.string().refine(
+    (id): id is SupportedChatModelId => findSupportedChatModel(id) != null,
+    { message: "Unsupported chat model" },
+  );
   
   /** Default model when the session UI does not expose an explicit picker yet. */
   export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "openai/gpt-oss-120b:free";
