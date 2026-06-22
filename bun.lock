@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "mocode",
+      "dependencies": {
+        "dotenv": "^17.4.2",
+      },
     },
     "packages/cli": {
       "name": "@mocode/cli",
