@@ -14,537 +14,197 @@
  * - `onFinish` captures token usage → credits via {@link calculateCreditsForUsage}
  * - {@link ingestAiUsage} reports to Polar with idempotent `chat-message:{id}` keys
  *
- * Persists USER / ASSISTANT / ERROR rows to the database. Interrupted streams
- * (client disconnect or abort) save partial ASSISTANT content with INTERRUPTED
- * status. Resume replays generation when the last stored message is USER-only.
+ * Phase 11 moves tool *execution* to the CLI:
+ * - Server registers {@link getToolContracts} with `streamText` (definitions only)
+ * - Client runs tools locally and re-posts via `addToolOutput` + auto-resubmit
+ * - Session is not persisted until all tool calls in the response have output
+ *   ({@link hasPendingToolCalls} gate in `onFinish`)
+ *
+ * Persists USER / ASSISTANT rows to the database. Interrupted streams save partial
+ * ASSISTANT content. Resume replays generation when the last stored message is USER-only.
  */
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { streamSSE } from "hono/streaming";
-import { streamText as aiStreamText, stepCountIs } from "ai";
+import {
+  convertToModelMessages,
+  streamText, 
+  validateUIMessages,
+  type InferUITools,
+  type LanguageModelUsage,
+  type UIMessage,
+} from "ai";
 import { db } from "@mocode/database/client";
-import { Mode, MessageStatus } from "@mocode/database/enums";
-import { 
-    type ChatStreamEvent,
-    type MessagePart,
-    toolCallArgsSchema,
-    messagePartsSchema,
- } from "@mocode/shared";
-import { isSupportedChatModel, resolveChatModel } from "../lib/model";
 import type { Prisma } from "@mocode/database";
-import { createTools } from "../tools";
+import { 
+  getToolContracts, 
+  modeSchema, 
+  type ModeType, 
+  type ToolContracts
+} from "@mocode/shared";
 import { buildSystemPrompt } from "../system-prompt";
-import type { AuthenticatedEnv } from "../middleware/require-auth.ts";
-
-import type { LanguageModelUsage } from "ai";
+import type { AuthenticatedEnv } from "../middleware/require-auth";
 import { requireCreditsBalance } from "../middleware/require-credits-balance";
 import { calculateCreditsForUsage } from "../lib/credits";
 import { ingestAiUsage } from "../lib/polar";
+import { isSupportedChatModel, resolveChatModel } from "../lib/model";
+
+type ChatMessageMetadata = {
+  mode?: ModeType;
+  model?: string;
+  durationMs?: number;
+  usage?: LanguageModelUsage;
+};
+
+type MocodeUIMessage = UIMessage<ChatMessageMetadata, never, InferUITools<ToolContracts>>;
 
 const submitSchema = z.object({
-    content: z.string(),
-    mode: z.enum(Mode),
-    // Shared catalog guard; rejects unknown model ids before hitting the provider SDK.
-    model: z.string().refine(isSupportedChatModel, "Invalid model"),
-})
-
-const submitValidator = zValidator("json", submitSchema, (result, c) => {
-    if(!result.success){
-        return c.json({ error: result.error.message }, 400);
-    }
+  id: z.string(),
+  messages: z
+    .array(
+      z.custom<MocodeUIMessage>((value) => {
+        return value != null && typeof value === "object" && "id" in value && "parts" in value;
+      }),
+    )
+    .min(1),
+  mode: modeSchema,
+  model: z.string().refine(isSupportedChatModel, "Unsupported model"),
 });
 
-/** Prevents duplicate resume SSE connections for the same session (held for stream lifetime). */
-const activeResumeSessionIds = new Set<string>();
+const submitValidator = zValidator("json", submitSchema, (result, c) => {
+  if (!result.success) {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+});
 
-/**
- * Maps DB messages to Vercel AI SDK `messages` shape.
- * Skips ERROR rows and empty assistant placeholders left by interrupted runs.
- */
-function buildConversationHistory(
-    messages: {
-        role: "USER" | "ASSISTANT" | "ERROR";
-        content: string;
-        status: MessageStatus;
-    }[]
-){
-    return messages.flatMap((msg)=>{
-        if(msg.role === "ERROR"){
-            return []
-        }
-        // Empty assistant rows can remain after a failed/interrupted run; omit from LLM context.
-        if(msg.role === "ASSISTANT" && msg.content.length=== 0){
-            return []
-        }
-        return [
-            {
-                role: msg.role === "USER" ? ("user" as const) : ("assistant" as const),
-                content: msg.content,
-            }
-        ]
-    })
-}
-
-/** Returns the trailing user message when the assistant never finished replying. */
-function getResumableUserMessage(
-    messages:{
-        role: "USER" | "ASSISTANT" | "ERROR";
-        model:string;
-        mode:Mode;
-    }[],
-){
-    const lastMessage = messages[messages.length -1 ];
-    if(!lastMessage || lastMessage.role !== "USER"){
-        return null;
+/** True when the assistant message still has tool calls awaiting client-side execution. */
+function hasPendingToolCalls(message: MocodeUIMessage) {
+  return message.parts.some((part) => {
+    if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
+      const state = (part as { state?: string }).state;
+      return state !== "output-available" && state !== "output-error";
     }
-    return lastMessage;
-}
 
-type StreamParams = {
-    sessionId: string;
-    model: string;
-    userId: string;
-    /** Session working directory; when null, tools are disabled (plain chat only). */
-    cwd: string | null;
-    history: {
-        role: "user" | "assistant";
-        content: string;
-    }[];
-    mode: Mode;
-    abortController: AbortController;
-}  
-
-type IngestUsageForMessageParams = {
-    messageId: string;
-    status: "complete" | "interrupted";
-}
-
-/**
- * Runs the agent loop via `streamText`, forwards stream chunks as SSE, then persists
- * the final assistant row (or handles abort/error paths).
- *
- * Accumulates {@link MessagePart} segments in `parts` while iterating `fullStream`:
- * - reasoning-delta → coalesced reasoning parts + SSE
- * - text-delta → coalesced text parts + SSE (also joined into Message.content)
- * - tool-call / tool-result → structured tool parts + SSE
- *
- * `Message.content` remains plain assistant text for backward-compatible history;
- * rich segments live in `Message.parts` JSON.
- */
-async function streamAIResponse(
-    stream:Parameters<Parameters<typeof streamSSE>[1]>[0],
-    params: StreamParams
-){
-    const { sessionId, model, history, mode, abortController, cwd, userId } = params;
-
-    const startTime = Date.now();
-    const resolvedModel = resolveChatModel(model);
-    /** Ordered segments persisted to Message.parts and mirrored on the wire. */
-    const parts: MessagePart[] = [];
-    let completedUsage: LanguageModelUsage | null = null;
-    /** Undefined when cwd is missing — agent runs in text-only mode without tools. */
-    const tools = cwd ? createTools(cwd, mode) : undefined;
-
-    /** Writes partial output when the client disconnects before `done`. */
-    const persistInterruptedMessage = async ()=>{
-
-        // content column = concatenated text parts only (reasoning/tools omitted).
-        const fullText = parts
-            .filter((p)=> p.type === "text")
-            .map((p)=> p.text)
-            .join("");
-
-        if(fullText.length === 0 && parts.length === 0) return;
-
-        const elapsedMs = Date.now() - startTime;
-        const validateParts: Prisma.InputJsonValue | undefined = parts.length > 0 ? messagePartsSchema.parse(parts) : undefined;
-
-        return db.message.create({
-            data:{
-                sessionId,
-                role: "ASSISTANT",
-                status:MessageStatus.INTERRUPTED,
-                content: fullText,
-                model,
-                mode,
-                parts: validateParts,
-                duration: Math.round(elapsedMs/1000), // seconds in DB; see `done.durationMs` on wire
-            }
-        })
-    };
-
-    /** Converts captured usage to credits and ingests into Polar; logs on failure (non-blocking). */
-    const ingestUsageForMessage = async ({ messageId, status }: IngestUsageForMessageParams) => {
-        if (!completedUsage) return;
-    
-        try {
-          const billableUsage = calculateCreditsForUsage({
-            provider: resolvedModel.provider,
-            model: resolvedModel.modelId,
-            usage: completedUsage,
-          });
-    
-          await ingestAiUsage({
-            externalCustomerId: userId,
-            eventId: `chat-message:${messageId}`,
-            credits: billableUsage.credits,
-          });
-        } catch (error) {
-          console.error("Failed to ingest Polar AI usage for chat message", {
-            error,
-            sessionId,
-            messageId,
-            userId,
-          });
-        }
-      };
-    
-      /** Persists partial assistant row then bills tokens consumed before abort. */
-      const persistInterruptedMessageAndUsage = async () => {
-        const interruptedMessage = await persistInterruptedMessage();
-        if (!interruptedMessage) return;
-    
-        await ingestUsageForMessage({
-          messageId: interruptedMessage.id,
-          status: "interrupted",
-        });
-      };
-    
-    
-    try{
-        const result = aiStreamText({
-            model: resolvedModel.model,
-            messages:history,
-            abortSignal: abortController.signal,
-            providerOptions: resolvedModel.providerOptions,
-            tools,
-            system: buildSystemPrompt({cwd, mode}),
-            // Cap agent steps to avoid runaway tool loops; only applied when tools exist.
-            stopWhen: tools ? stepCountIs(50) : undefined,
-            // Phase 10: totalUsage feeds credit calculation after stream ends.
-            onFinish(event){
-                completedUsage = event.totalUsage;
-            }
-        });
-        
-        for await (const chunk of result.fullStream){
-            if(stream.aborted) break;
-
-            // Provider-native thinking/reasoning tokens (Anthropic, OpenAI, Gemini, etc.).
-            if(chunk.type === "reasoning-delta"){
-                const last = parts[parts.length - 1];
-                if(last && last.type === "reasoning"){
-                    last.text += chunk.text;
-                }else{
-                    parts.push({ type: "reasoning", text: chunk.text });
-                }
-                const event: ChatStreamEvent = {
-                    type: "reasoning-delta",
-                    text: chunk.text,
-                }
-                await stream.writeSSE({
-                    event: "reasoning-delta",
-                    data: JSON.stringify(event)
-                })
-            }
-            
-            if(chunk.type === "text-delta"){
-                const last = parts[parts.length - 1];
-                if(last && last.type === "text"){
-                    last.text += chunk.text;
-                }else{
-                    parts.push({ type: "text", text: chunk.text });
-                }
-
-                const event: ChatStreamEvent = {
-                    type: "text-delta",
-                    text: chunk.text,
-                }
-                // Event name mirrors `type` so clients can filter without parsing data first.
-                await stream.writeSSE({
-                    event:"text-delta", 
-                    data: JSON.stringify(event)
-                });     
-            }
-
-            if(chunk.type === "tool-call"){
-                const args = toolCallArgsSchema.parse(chunk.input);
-                parts.push({
-                    type: "tool-call",
-                    id: chunk.toolCallId,
-                    name: chunk.toolName,
-                    args,
-                });
-
-                // Result is attached later when the matching tool-result chunk arrives.
-                const event: ChatStreamEvent = {
-                    type: "tool-call",
-                    toolCallId: chunk.toolCallId,
-                    toolName: chunk.toolName,
-                    args,
-                }
-                await stream.writeSSE({
-                    event: "tool-call",
-                    data: JSON.stringify(event)
-                })
-            }
-
-
-            if(chunk.type === "tool-result"){
-                const resultStr = typeof chunk.output === "string" ? chunk.output : JSON.stringify(chunk.output);
-
-                // Merge result into the tool-call part so DB reload has a single structured row.
-                const tcPart = parts.find(
-                    (p): p is Extract<MessagePart, { type: "tool-call" }> =>
-                        p.type === "tool-call" && p.id === chunk.toolCallId
-                );
-                if(tcPart){
-                    tcPart.result = resultStr;
-                }
-
-                const event: ChatStreamEvent = {
-                    type: "tool-result",
-                    toolCallId: chunk.toolCallId,
-                    result: resultStr,
-                }
-                await stream.writeSSE({
-                    event: "tool-result",
-                    data: JSON.stringify(event)
-                })
-            }
-
-            if(chunk.type === "error"){
-                throw chunk.error;
-            }
-        }
-        if(stream.aborted || abortController.signal.aborted ){
-            await persistInterruptedMessageAndUsage();
-            return;
-        }
-
-        const elapsedMs = Date.now() - startTime;
-        const fullText = parts
-            .filter((p)=> p.type === "text")
-            .map((p)=> p.text)
-            .join("");
-
-        const validateParts: Prisma.InputJsonValue | undefined = parts.length > 0 ? messagePartsSchema.parse(parts) : undefined;
-
-        const assistantMessage = await db.message.create({
-            data:{
-                sessionId,
-                role: "ASSISTANT",
-                content: fullText,
-                model,
-                mode,
-                status: MessageStatus.COMPLETE,
-                parts: validateParts,
-                // Message.duration is stored in whole seconds; SSE `done` uses milliseconds.
-                duration: Math.round(elapsedMs/1000),
-            }
-        });
-
-        await ingestUsageForMessage({
-            messageId: assistantMessage.id,
-            status: "complete",
-        });
-
-        const doneEvent: ChatStreamEvent = {
-            type: "done",
-            messageId: assistantMessage.id,
-            durationMs:elapsedMs
-        };
-        await stream.writeSSE({
-            event: "done",
-            data: JSON.stringify(doneEvent)
-        })
-    }catch(err){
-        if(abortController.signal.aborted){
-            await persistInterruptedMessageAndUsage();
-            return;
-        }
-        const message = err instanceof Error ? err.message : "An unknown error occurred";
-        // Persist provider failures so they appear in session history on reload.
-        await db.message.create({
-            data:{
-                sessionId,
-                role: "ERROR",
-                content: message,
-                model,
-                mode,
-                status: MessageStatus.COMPLETE,
-            }
-        });
-
-        const errorEvent: ChatStreamEvent = {
-            type: "error",
-            message: message,
-        }
-        await stream.writeSSE({
-            event: "error",
-            data: JSON.stringify(errorEvent)
-        })
-    }
-}
+    return false;
+  });
+};
 
 const app = new Hono<AuthenticatedEnv>()
-    /** Resume generation for the last unanswered user message (no new USER row). */
-    .post("/:sessionId/resume", requireCreditsBalance, async(c)=>{
-        const sessionId  = c.req.param("sessionId");
-        const userId = c.get("userId");
-        const session = await db.session.findUnique({
-            where: {
-                id: sessionId,
-                userId, // Must belong to the authenticated user
-            },
-            include: {
-                messages: {
-                    orderBy: {
-                        createdAt: "asc",
-                    },
-                }
-            },
-        });
-        if(!session){
-            return c.json({ error: "Session not found" }, 404);
+  .post(
+    "/",
+    requireCreditsBalance,
+    submitValidator,
+    async (c) => {
+      const userId = c.get("userId");
+      const { id, messages, mode, model } = c.req.valid("json");
+
+      const session = await db.session.findUnique({
+        where: { id, userId },
+      });
+
+      if (!session) {
+        return c.json({ error: "Session not found" }, 404);
+      }
+
+      const startTime = Date.now();
+      // Tool contracts only — executors live in CLI `executeLocalTool` (Phase 11).
+      const tools = getToolContracts(mode);
+      const resolvedModel = resolveChatModel(model);
+      const previousMessages = Array.isArray(session.messages)
+        ? (session.messages as unknown as MocodeUIMessage[])
+        : [];
+      const mergedMessages = [...previousMessages];
+      
+      for (const message of messages) {
+        const incomingMessage = {
+          ...message,
+          metadata: { ...message.metadata, mode, model },
+        } satisfies MocodeUIMessage;
+
+        const existingMessageIndex = mergedMessages.findIndex((m) => m.id === incomingMessage.id);
+
+        if (existingMessageIndex === -1) {
+          mergedMessages.push(incomingMessage);
+        } else {
+          mergedMessages[existingMessageIndex] = incomingMessage;
         }
+      }
 
-        const resumableMessage = getResumableUserMessage(session.messages);
-        if(!resumableMessage){
-            return c.json({ error: "Session has no pending user message to resume" }, 409);
-        }
+      const nextMessages = await validateUIMessages<MocodeUIMessage>({
+        messages: mergedMessages,
+        tools,
+      });
+      const modelMessages = await convertToModelMessages(nextMessages, { tools });
+      let completedUsage: LanguageModelUsage | null = null;
 
-        if(!isSupportedChatModel(resumableMessage.model)){
-            return c.json({ error: `Session is using an unsupported model: ${resumableMessage.model}` }, 409);
-        }
+      const result = streamText({
+        model: resolvedModel.model,
+        system: buildSystemPrompt({ mode }),
+        messages: modelMessages,
+        tools,
+        providerOptions: resolvedModel.providerOptions,
+        onFinish(event) {
+          completedUsage = event.totalUsage;
+        },
+      });
 
-        if(activeResumeSessionIds.has(sessionId)){
-            return c.json({ error: "Session is already being resumed" }, 409);
-        }
-        activeResumeSessionIds.add(sessionId);
+      return result.toUIMessageStreamResponse<MocodeUIMessage>({
+        originalMessages: nextMessages,
+        messageMetadata({ part }) {
+          if (part.type === "start") {
+            return { mode, model };
+          }
 
-        const history = buildConversationHistory(session.messages);
-        const abortController = new AbortController();
-        
-        try{
-            return streamSSE(
-                c,
-                async(stream)=>{
-                    // Propagate client disconnect to the AI SDK so generation stops promptly.
-                    stream.onAbort(()=>{
-                        abortController.abort();
-                    });
-                    try{
-                        await streamAIResponse(stream, {
-                            sessionId,
-                            userId,
-                            model: resumableMessage.model,
-                            cwd: session.cwd,
-                            history,
-                            mode: resumableMessage.mode,
-                            abortController,
-                        });
-                    }finally{
-                        activeResumeSessionIds.delete(sessionId);
-                    }
-                },
-                async(err,stream) =>{
-                    activeResumeSessionIds.delete(sessionId);
+          if (part.type !== "finish") return undefined;
 
-                    const message = err instanceof Error ? err.message : "An unknown error occurred";
-                    const errorEvent: ChatStreamEvent = {
-                        type: "error",
-                        message,
-                    }
-                    await stream.writeSSE({
-                        event: "error",
-                        data: JSON.stringify(errorEvent)
-                    });
-                },
-            );
-        }catch(err){
-            activeResumeSessionIds.delete(sessionId);
-            throw err;
-        }
-    })
-    /** Accept a user message, persist it, then stream the assistant reply. Phase 10: credits gate. */
-    .post("/:sessionId",requireCreditsBalance ,submitValidator,async(c)=>{
-        const sessionId  = c.req.param("sessionId");
-        const userId = c.get("userId");
+          return {
+            mode,
+            model,
+            durationMs: Date.now() - startTime,
+            ...(completedUsage ? { usage: completedUsage } : {}),
+          };
+        },
+        async onFinish(event) {
+          if (event.isAborted) return;
 
-        const session = await db.session.findUnique({
-            where: {
-                id: sessionId,
-                userId, // Must belong to the authenticated user
-            },
-            include: {
-                messages: {
-                    orderBy: {
-                        createdAt: "asc",
-                    },
-                }
-            },
-        });
-        if(!session){
-            return c.json({ error: "Session not found" }, 404);
-        }
+          // Wait for the CLI to finish all tool calls before persisting/billing.
+          if (hasPendingToolCalls(event.responseMessage)) return;
 
-        const data = c.req.valid("json");
-
-        await db.message.create({
+          await db.session.update({
+            where: { id, userId },
             data: {
-                sessionId,
-                role: "USER",
-                content: data.content,
-                model: data.model,
-                mode: data.mode,
-                status: MessageStatus.COMPLETE,
-            }
-        });
-
-        // Include the just-created user turn when building SDK history.
-        const history = buildConversationHistory([
-            ...session.messages,
-            {
-                role: "USER" as const,
-                content: data.content,
-                status: MessageStatus.COMPLETE,
-            }
-        ]);
-
-
-        const abortController = new AbortController();
-        return streamSSE(
-            c,
-            async(stream)=>{
-                // Propagate client disconnect to the AI SDK so generation stops promptly.
-                stream.onAbort(()=>{
-                    abortController.abort();
-                });
-                await streamAIResponse(stream, {
-                    sessionId,
-                    userId,
-                    model: data.model,
-                    cwd: session.cwd,
-                    history,
-                    mode: data.mode,
-                    abortController,
-                }); 
+              messages: event.messages as unknown as Prisma.InputJsonValue,
             },
-            async(err,stream)=>{
-                const message = err instanceof Error ? err.message : "An unknown error occurred";
-                const errorEvent: ChatStreamEvent = {
-                    type: "error",
-                    message,
-                }
-                await stream.writeSSE({
-                    event: "error",
-                    data: JSON.stringify(errorEvent)
-                }); 
-            }
-        );
-    });
+          });
 
+          if (!completedUsage) return;
+
+          try {
+            const billableUsage = calculateCreditsForUsage({
+              provider: resolvedModel.provider,
+              model: resolvedModel.modelId,
+              usage: completedUsage,
+            });
+
+            await ingestAiUsage({
+              externalCustomerId: userId,
+              eventId: `chat-message:${event.responseMessage.id}`,
+              credits: billableUsage.credits,
+            });
+          } catch (error) {
+            console.error("Failed to ingest Polar AI usage for chat message", {
+              error,
+              sessionId: id,
+              messageId: event.responseMessage.id,
+              userId,
+            });
+          }
+        },
+        onError(error) {
+          return error instanceof Error ? error.message : String(error);
+        },
+      });
+    },
+  );
 
 export default app;

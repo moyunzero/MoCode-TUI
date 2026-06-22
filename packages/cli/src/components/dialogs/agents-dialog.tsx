@@ -1,19 +1,19 @@
 import { useCallback} from "react";
 import { useDialog } from "../../providers/dialog";
 import { DialogSearchList } from "../dialog-search-list";
-import { Mode } from "@mocode/database/enums";
+import { Mode, type ModeType } from "@mocode/shared";
 
 /** Modes exposed in the /agents picker (subset of the Mode enum). */
-const AVAILABLE_MODES: Mode[] = [Mode.BUILD, Mode.PLAN];
+const AVAILABLE_MODES: ModeType[] = [Mode.BUILD, Mode.PLAN];
 
 type AgentsDialogContentProps = {
     /** Highlighted with a bullet in the list; not disabled — user may re-select the same mode. */
-    currentMode: Mode;
+    currentMode: ModeType;
     /** Writes into PromptConfigProvider via the slash-command action context. */
-    onSelectMode: (mode:Mode) => void;
+    onSelectMode: (mode:ModeType) => void;
 }
 
-function getModeLabel(mode:Mode){
+function getModeLabel(mode:ModeType){
     return mode === Mode.PLAN? "Plan" : "Build";
 }
 
@@ -24,7 +24,7 @@ export const AgentsDialogContent = ({
 }: AgentsDialogContentProps) => {
    const dialog = useDialog();
 
-   const handleSelect = useCallback((nextMode:Mode)=>{
+   const handleSelect = useCallback((nextMode:ModeType)=>{
     onSelectMode(nextMode);
     dialog.close();
    },[onSelectMode,dialog]);

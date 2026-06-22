@@ -2,7 +2,7 @@ import { TextAttributes } from "@opentui/core";
 import { getNewlineHint } from "../terminal-capabilities";
 import { useTheme } from "../providers/theme";
 import { usePromptConfig } from "../providers/prompt-config";
-import { Mode } from "@mocode/database/enums";
+import { Mode } from "@mocode/shared";
 
 /** Footer hints: agent mode, model label, and submit/newline shortcuts for this terminal. */
 export function StatusBar() {

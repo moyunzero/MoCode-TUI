@@ -1,84 +1,102 @@
-import { z } from "zod";
-
 /**
- * Shared wire + persistence schemas for the agent streaming protocol (Phase 8).
+ * Phase 11 — Shared tool contracts for server streaming and CLI execution.
  *
- * Server validates tool args and message parts before DB write; CLI validates
- * incoming SSE frames with {@link chatStreamEventSchema}.
+ * `toolInputSchemas` — Zod shapes used by the CLI to validate inputs before I/O.
+ * `readOnlyToolContracts` / `buildToolContracts` — AI SDK `tool()` definitions
+ * the server passes to `streamText`; they describe tools to the model only.
+ * {@link getToolContracts} selects the set by session mode (PLAN vs BUILD).
+ *
+ * Keeping schemas and contracts in `@mocode/shared` ensures the model, server,
+ * and CLI agree on tool names and argument shapes without duplicating definitions.
  */
+import { z } from "zod";
+import { tool } from "ai";
 
-/** Opaque JSON object passed to tool calls during streaming. */
-export const toolCallArgsSchema = z.record(z.string(), z.json());
-
-const toolCallPartFields = {
-    id: z.string(),
-    name: z.string(),
-    args: toolCallArgsSchema,
-    result: z.string().optional(),
+export const Mode = {
+  BUILD: "BUILD",
+  PLAN: "PLAN",
 } as const;
 
-/**
- * Persisted structure for a message's streamed segments (stored in Message.parts).
- *
- * Order matches arrival during generation. Tool results are inlined on the
- * tool-call part after execution completes.
- */
-export const messagePartSchema = z.discriminatedUnion("type", [
-    z.object({
-        type: z.literal("reasoning"),
-        text: z.string(),
-    }),
-    z.object({
-        type: z.literal("tool-call"),
-        ...toolCallPartFields,
-    }),
-    z.object({
-        type: z.literal("tool_call"),
-        ...toolCallPartFields,
-    }),
-    z.object({
-        type: z.literal("text"),
-        text: z.string(),
-    }),
-]);
+export const modeSchema = z.enum([Mode.BUILD, Mode.PLAN]);
 
-export const messagePartsSchema = z.array(messagePartSchema);
+export type ModeType = (typeof Mode)[keyof typeof Mode];
 
-export type MessagePart = z.infer<typeof messagePartSchema>;
+/** Zod input schemas keyed by tool name; shared between server contracts and CLI validation. */
+export const toolInputSchemas = {
+  readFile: z.object({
+    path: z.string().describe("Relative path to the file to read"),
+  }),
+  listDirectory: z.object({
+    path: z.string().default(".").describe("Relative directory path to list"),
+  }),
+  glob: z.object({
+    pattern: z.string().describe("Glob pattern to match files"),
+    path: z.string().default(".").describe("Directory to search from"),
+  }),
+  grep: z.object({
+    pattern: z.string().describe("Regex pattern to search for"),
+    path: z.string().default(".").describe("Directory to search from"),
+    include: z.string().optional().describe("Optional glob for files to include"),
+  }),
+  writeFile: z.object({
+    path: z.string().describe("Relative path to write"),
+    content: z.string().describe("File contents"),
+  }),
+  editFile: z.object({
+    path: z.string().describe("Relative path to edit"),
+    oldString: z.string().describe("Exact text to replace; must be unique"),
+    newString: z.string().describe("Replacement text"),
+  }),
+  bash: z.object({
+    command: z.string().describe("Shell command to run"),
+    description: z.string().optional().describe("Short description of the command"),
+    timeout: z.number().optional().describe("Timeout in milliseconds"),
+  }),
+} as const;
 
-/** Wire format for SSE chunks from POST /chat and /chat/:id/resume. */
-export const chatStreamEventSchema = z.discriminatedUnion("type", [
-    z.object({
-        type: z.literal("text-delta"),
-        text: z.string(),
-    }),
-    /** Provider reasoning/thinking tokens; rendered in BotMessage "Thinking:" block. */
-    z.object({
-        type: z.literal("reasoning-delta"),
-        text: z.string(),
-    }),
-    /** Emitted when the model invokes a tool; paired with tool-result by toolCallId. */
-    z.object({
-        type: z.literal("tool-call"),
-        toolCallId: z.string(),
-        toolName: z.string(),
-        args: toolCallArgsSchema,
-    }),
-    /** Tool execution output; client marks the matching tool-call as done. */
-    z.object({
-        type: z.literal("tool-result"),
-        toolCallId: z.string(),
-        result: z.string(),
-    }),
-    z.object({
-        type:z.literal("done"),
-        messageId: z.string(),
-        durationMs: z.number(),
-    }),
-    z.object({
-        type: z.literal("error"),
-        message: z.string(),
-    }),
-]);
+/** Read-only tools available in PLAN mode (and as a subset of BUILD). */
+export const readOnlyToolContracts = {
+  readFile: tool({
+    description: "Read a file from the current project directory.",
+    inputSchema: toolInputSchemas.readFile,
+  }),
+  listDirectory: tool({
+    description: "List entries in a directory under the current project directory.",
+    inputSchema: toolInputSchemas.listDirectory,
+  }),
+  glob: tool({
+    description: "Find files matching a glob pattern under the current project directory.",
+    inputSchema: toolInputSchemas.glob,
+  }),
+  grep: tool({
+    description:
+      "Search file contents with a regular expression under the current project directory.",
+    inputSchema: toolInputSchemas.grep,
+  }),
+} as const;
 
-export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
+/** Full toolset for BUILD mode: read-only tools plus write/edit/bash. */
+export const buildToolContracts = {
+  ...readOnlyToolContracts,
+  writeFile: tool({
+    description: "Create or overwrite a file under the current project directory.",
+    inputSchema: toolInputSchemas.writeFile,
+  }),
+  editFile: tool({
+    description: "Replace exact text in a file under the current project directory.",
+    inputSchema: toolInputSchemas.editFile,
+  }),
+  bash: tool({
+    description: "Run a shell command in the current project directory.",
+    inputSchema: toolInputSchemas.bash,
+  }),
+} as const;
+
+export type ToolContracts = typeof buildToolContracts;
+
+/** Returns AI SDK tool definitions for the given mode (no executors — Phase 11 runs tools on CLI). */
+export function getToolContracts(mode: ModeType) {
+  return mode === Mode.PLAN 
+    ? readOnlyToolContracts 
+    : buildToolContracts;
+};

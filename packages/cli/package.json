@@ -16,12 +16,12 @@
     "typescript": "^5.4"
   },
   "dependencies": {
-    "@mocode/database": "workspace:*",
+    "@ai-sdk/react": "^3.0.210",
     "@mocode/shared": "workspace:*",
     "@opentui/core": "^0.4.1",
     "@opentui/react": "^0.4.1",
+    "ai": "^6.0.208",
     "date-fns": "^4.4.0",
-    "eventsource-parser": "^3.1.0",
     "hono": "^4.12.25",
     "open": "^11.0.0",
     "opentui-spinner": "^0.0.7",

@@ -1,10 +1,10 @@
 import "opentui-spinner/react";
 import { useTheme } from "../providers/theme";
-import { Mode } from "@mocode/database/enums";
+import { Mode, type ModeType } from "@mocode/shared";
 
 type Props = {
     /** When omitted, defaults to BUILD (primary color). */
-    mode?:Mode;
+    mode?:ModeType;
 }
 
 /** Inline loading indicator; color matches the active agent mode border. */

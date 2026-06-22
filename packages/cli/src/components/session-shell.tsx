@@ -42,7 +42,7 @@ export function SessionShell({
                 stickyStart="bottom"
             >
                 {/* Keep the latest message in view as the transcript grows. */}
-                <box gap={1}>
+                <box>
                     {children}
                 </box>
             </scrollbox>

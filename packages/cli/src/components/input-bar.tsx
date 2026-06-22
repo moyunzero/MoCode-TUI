@@ -1,22 +1,22 @@
-import { useRef,useCallback,useEffect, useState, type RefObject } from "react";
+import { readdir } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
+import { useRef, useState, useCallback, useEffect, type RefObject } from "react";
+import { TextAttributes } from "@opentui/core";
 import type { TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
+import { useKeyboard, useRenderer } from "@opentui/react";
 import type { KeyBinding } from "@opentui/core";
-import { useRenderer, useKeyboard } from "@opentui/react";
-import { StatusBar } from "./status-bar";
+import { useNavigate } from "react-router";
 import { EmptyBorder } from "./border";
+import { StatusBar } from "./status-bar";
 import { CommandMenu } from "./command-menu";
-import type {Command} from "./command-menu/types";
+import type { Command } from "./command-menu/types";
 import { useCommandMenu } from "./command-menu/use-command-menu";
 import { useToast } from "../providers/toast";
 import { useKeyboardLayer } from "../providers/keyboard-layer";
 import { useDialog } from "../providers/dialog";
 import { useTheme } from "../providers/theme";
-import { useNavigate } from "react-router";
 import { usePromptConfig } from "../providers/prompt-config";
-import { Mode } from "@mocode/database/enums";
-import { readdir } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
-import { TextAttributes } from "@opentui/core";
+import { Mode } from "@mocode/shared";
 
 const MAX_VISIBLE_MENTIONS = 8;
 const CURRENT_DIRECTORY = process.cwd();
@@ -35,57 +35,69 @@ type MentionCandidate = {
   kind: "file" | "directory";
 };
 
-function isWithinCurrentDirectory(targetPath:string){
+function isWithinCurrentDirectory(targetPath: string) {
   const relativePath = relative(CURRENT_DIRECTORY, targetPath);
-  return relativePath === ""
-    || (!relativePath.startsWith("..")
+  return relativePath === "" 
+    || (!relativePath.startsWith("..") 
     && !isAbsolute(relativePath));
 }
 
-function isMentionQueryCharacter(character:string){
+function isMentionQueryCharacter(character: string) {
   return MENTION_QUERY_CHARACTER.test(character);
 }
 
-function findActiveMention(text: string, cursorOffset:number): MentionMatch | null {
-  const safeOffset = Math.max(0, Math.min(cursorOffset,text.length));
+function findActiveMention(text: string, cursorOffset: number): MentionMatch | null {
+  const safeOffset = Math.max(0, Math.min(cursorOffset, text.length));
+
   let start = safeOffset;
-  while(start> 0 && !/\s/.test(text[start-1]!)){
+  while (start > 0 && !/\s/.test(text[start - 1]!)) {
     start -= 1;
   }
+
   let end = safeOffset;
-  while(end<text.length && !/\s/.test(text[end]!)){
+  while (end < text.length && !/\s/.test(text[end]!)) {
     end += 1;
   }
-  
+
   const token = text.slice(start, end);
   const relativeCursor = safeOffset - start;
   const mentionStart = token.lastIndexOf("@", relativeCursor);
-  if(mentionStart === -1) return null;
+
+  if (mentionStart === -1) {
+    return null;
+  }
 
   const previousCharacter = token[mentionStart - 1];
-  if(previousCharacter && isMentionQueryCharacter(previousCharacter)){
+  if (previousCharacter && isMentionQueryCharacter(previousCharacter)) {
     return null;
   }
 
   let mentionEnd = mentionStart + 1;
-  while(mentionEnd < token.length && isMentionQueryCharacter(token[mentionEnd]!)){
+  while (mentionEnd < token.length && isMentionQueryCharacter(token[mentionEnd]!)) {
     mentionEnd += 1;
   }
 
-  if(relativeCursor < mentionStart || relativeCursor > mentionEnd) return null;
+  if (relativeCursor < mentionStart || relativeCursor > mentionEnd) {
+    return null;
+  }
 
-  return{
+  return {
     start: start + mentionStart,
     end: start + mentionEnd,
-    query: token.slice(mentionStart+1, mentionEnd),
-  }
-};
+    query: token.slice(mentionStart + 1, mentionEnd),
+  };
+}
 
-async function getMentionCandidates(query:string): Promise<MentionCandidate[]> {
-  const normalizedQuery = query.startsWith("./")? query.slice(2) : query;
-  if(normalizedQuery.startsWith("/")) return [];
+async function getMentionCandidates(query: string): Promise<MentionCandidate[]> {
+  const normalizedQuery = query.startsWith("./") ? query.slice(2) : query;
+  if (normalizedQuery.startsWith("/")) {
+    return [];
+  }
+
   const hasTrailingSlash = normalizedQuery.endsWith("/");
-  const lastSlashIndex = hasTrailingSlash ? normalizedQuery.length - 1 : normalizedQuery.lastIndexOf("/");
+  const lastSlashIndex = hasTrailingSlash
+    ? normalizedQuery.length - 1
+    : normalizedQuery.lastIndexOf("/");
 
   const directoryPart = hasTrailingSlash
     ? normalizedQuery.slice(0, -1)
@@ -100,7 +112,9 @@ async function getMentionCandidates(query:string): Promise<MentionCandidate[]> {
       : normalizedQuery.slice(lastSlashIndex + 1);
 
   const absoluteDirectory = resolve(CURRENT_DIRECTORY, directoryPart || ".");
-  if(!isWithinCurrentDirectory(absoluteDirectory)) return [];
+  if (!isWithinCurrentDirectory(absoluteDirectory)) {
+    return [];
+  }
 
   try {
     const entries = await readdir(absoluteDirectory, { withFileTypes: true });
@@ -245,39 +259,26 @@ type Props = {
   disabled?: boolean;
 };
 
-/**
- * Enter submits; Shift+Enter inserts a newline when the terminal reports modifier keys.
- * Apple Terminal cannot distinguish Shift+Enter — fall back to Ctrl+J or Option+Enter
- * (Option+Enter requires `bun run dev:cli -- --terminal-setup` on macOS).
- */
 export const TEXTAREA_KEY_BINDINGS: KeyBinding[] = [
   { name: "return", action: "submit" },
   { name: "enter", action: "submit" },
-  { name: "kpenter", action: "submit" },
   { name: "return", shift: true, action: "newline" },
   { name: "enter", shift: true, action: "newline" },
-  { name: "kpenter", shift: true, action: "newline" },
-  { name: "linefeed", action: "newline" },
-  { name: "j", ctrl: true, action: "newline" },
-  { name: "return", meta: true, action: "newline" },
-  { name: "enter", meta: true, action: "newline" },
-  { name: "kpenter", meta: true, action: "newline" },
 ];
 
 export function InputBar({ onSubmit, disabled = false }: Props) {
   const { mode, toggleMode, setMode, setModel } = usePromptConfig();
   const textareaRef = useRef<TextareaRenderable>(null);
-  const onSubmitRef = useRef<()=> void>(()=>{});
-  const renderer = useRenderer();
-  const toast = useToast();
-  const { colors } = useTheme();
-  const navigate = useNavigate();
-
+  const onSubmitRef = useRef<() => void>(() => {});
   const activeMentionRef = useRef<MentionMatch | null>(null);
   const mentionScrollRef = useRef<ScrollBoxRenderable>(null);
 
-  const { push, pop, isTopLayer, setResponder } = useKeyboardLayer();
+  const renderer = useRenderer();
+  const navigate = useNavigate();
+  const toast = useToast();
   const dialog = useDialog();
+  const { colors } = useTheme();
+  const { isTopLayer, push, pop, setResponder } = useKeyboardLayer();
 
   const [activeMention, setActiveMention] = useState<MentionMatch | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<MentionCandidate[]>([]);
@@ -288,8 +289,8 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
     commandQuery,
     selectedIndex,
     scrollRef,
-    resolveCommand,
     handleContentChange,
+    resolveCommand,
     setSelectedIndex,
   } = useCommandMenu();
 
@@ -379,66 +380,35 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
   }, [syncMentionMenu]);
 
   const handleCommand = useCallback((
-    command:Command | undefined
-  )=>{
+    command: Command | undefined
+  ) => {
     const textarea = textareaRef.current;
-    if(!textarea || !command) return;
+    if (!textarea || !command) return;
+
     textarea.setText("");
-    if(command.action){
-        // Wire prompt config mutators into slash commands (/agents, /models, etc.).
-        void Promise.resolve(
-          command.action({
-            exit:()=>{
-                renderer.destroy()
-            },
-            toast,
-            dialog,
-            navigate:navigate,
-            mode,
-            setMode,
-            setModel,
-          }),
-        ).catch((error)=>{
-          console.error("Command execution failed:", error);
-        });
-    }else{
-        // Commands without an action become editable text (e.g. "/models ").
-        textarea.insertText(command.value + " ");
-    }
-  },[renderer, toast, dialog, navigate, mode, setMode, setModel])
 
-  const handleCommandExecute = useCallback((index:number)=>{
-    const command = resolveCommand(index);
-    handleCommand(command);
-  },[resolveCommand, handleCommand]);
-
- // Keep the file picker in sync with the current @mention token.
-  useEffect(() => {
-    if (!activeMention) {
-      setMentionCandidates([]);
-      return;
-    }
-
-    let ignore = false;
-    const loadCandidates = async () => {
-      const nextCandidates = await getMentionCandidates(activeMention.query);
-      if (ignore) return;
-
-      setMentionCandidates(nextCandidates);
-      setMentionSelectedIndex((currentIndex) => {
-        if (nextCandidates.length === 0) {
-          return 0;
-        }
-        return Math.min(currentIndex, nextCandidates.length - 1);
+    if (command.action) {
+      command.action({
+        exit: () => renderer.destroy(),
+        toast,
+        dialog,
+        navigate,
+        mode,
+        setMode,
+        setModel,
       });
-    };
+    } else {
+      textarea.insertText(command.value + " ");
+    }
+  }, [renderer, toast, dialog, navigate, mode, setMode, setModel]);
 
-    void loadCandidates();
-
-    return () => {
-      ignore = true;
-    };
-  }, [activeMention]);
+  const handleCommandExecute = useCallback(
+    (index: number) => {
+      const command = resolveCommand(index);
+      handleCommand(command);
+    },
+    [resolveCommand, handleCommand],
+  );
 
   // Keep the file picker in sync with the current @mention token.
   useEffect(() => {
@@ -468,15 +438,16 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
     };
   }, [activeMention]);
 
-  useEffect(()=>{
+  // Wire up textarea submit handler once so it always reads the latest state.
+  useEffect(() => {
     const textarea = textareaRef.current;
-    if(!textarea) return;
-    textarea.onSubmit = ()=>{
-        onSubmitRef.current();
-    }
-  },[]);
+    if (!textarea) return;
 
-  // Stable ref so textarea.onSubmit always sees the latest menu/submit logic.
+    textarea.onSubmit = () => {
+      onSubmitRef.current();
+    };
+  }, []);
+
   onSubmitRef.current = () => {
     if (disabled) return;
 
@@ -499,45 +470,6 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
 
   useKeyboard((key) => {
     if (disabled) return;
-
-    if (showMentionMenu && isTopLayer("mention")) {
-      if (key.name === "escape") {
-        key.preventDefault();
-        closeMentionMenu();
-      } else if (key.name === "up") {
-        key.preventDefault();
-        setMentionSelectedIndex((currentIndex) => {
-          const nextIndex = Math.max(0, currentIndex - 1);
-          const scrollbox = mentionScrollRef.current;
-          if (scrollbox && nextIndex < scrollbox.scrollTop) {
-            scrollbox.scrollTo(nextIndex);
-          }
-          return nextIndex;
-        });
-      } else if (key.name === "down") {
-        key.preventDefault();
-        setMentionSelectedIndex((currentIndex) => {
-          if (mentionCandidates.length === 0) {
-            return 0;
-          }
-
-          const nextIndex = Math.min(mentionCandidates.length - 1, currentIndex + 1);
-          const scrollbox = mentionScrollRef.current;
-
-          if (scrollbox) {
-            const viewportHeight = scrollbox.viewport.height;
-            const visibleEnd = scrollbox.scrollTop + viewportHeight - 1;
-            if (nextIndex > visibleEnd) {
-              scrollbox.scrollTo(nextIndex - viewportHeight + 1);
-            }
-          }
-
-          return nextIndex;
-        });
-      }
-      return;
-    }
-
     if (!isTopLayer("base")) return;
     if (key.name === "tab") {
       key.preventDefault();
@@ -545,30 +477,67 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
     }
   });
 
+  // Register the base layer responder for ctrl+c dismissal
+  useEffect(() => {
+    setResponder("base", () => {
+      if (disabled) return false;
 
-  // Base layer: Ctrl+C clears non-empty input before falling through to app exit.
-  useEffect(()=>{
-    setResponder("base",()=>{
-      if(disabled) return false;
       const textarea = textareaRef.current;
-      if(textarea && textarea.plainText.length > 0) {
+      if (textarea && textarea.plainText.length > 0) {
         textarea.setText("");
         return true;
       }
       return false;
     });
-    return ()=>{
-      setResponder("base",null);
-    }
-  },[disabled,setResponder])
 
+    return () => setResponder("base", null);
+  }, [disabled, setResponder]);
+
+  useKeyboard((key) => {
+    if (disabled) return;
+    if (!showMentionMenu || !isTopLayer("mention")) return;
+
+    if (key.name === "escape") {
+      key.preventDefault();
+      closeMentionMenu();
+    } else if (key.name === "up") {
+      key.preventDefault();
+      setMentionSelectedIndex((currentIndex) => {
+        const nextIndex = Math.max(0, currentIndex - 1);
+        const scrollbox = mentionScrollRef.current;
+        if (scrollbox && nextIndex < scrollbox.scrollTop) {
+          scrollbox.scrollTo(nextIndex);
+        }
+        return nextIndex;
+      });
+    } else if (key.name === "down") {
+      key.preventDefault();
+      setMentionSelectedIndex((currentIndex) => {
+        if (mentionCandidates.length === 0) {
+          return 0;
+        }
+
+        const nextIndex = Math.min(mentionCandidates.length - 1, currentIndex + 1);
+        const scrollbox = mentionScrollRef.current;
+
+        if (scrollbox) {
+          const viewportHeight = scrollbox.viewport.height;
+          const visibleEnd = scrollbox.scrollTop + viewportHeight - 1;
+          if (nextIndex > visibleEnd) {
+            scrollbox.scrollTo(nextIndex - viewportHeight + 1);
+          }
+        }
+
+        return nextIndex;
+      });
+    }
+  });
 
   return (
     <box width="100%" alignItems="center">
       <box
         border={["left"]}
-        // Left accent reflects agent mode (shared with StatusBar and Spinner).
-        borderColor={mode === Mode.PLAN ? colors.planMode : colors.primary}
+        borderColor={mode === Mode.BUILD ? colors.primary : colors.planMode}
         customBorderChars={{
           ...EmptyBorder,
           vertical: "┃",
@@ -585,54 +554,55 @@ export function InputBar({ onSubmit, disabled = false }: Props) {
           width="100%"
           gap={1}
         >
-            {showCommandMenu &&(
-                <box
-                    position="absolute"
-                    bottom="100%"
-                    left={0}
-                    width="100%"
-                    backgroundColor={colors.surface}
-                    zIndex={10}
-                >
-                    <CommandMenu 
-                        query={commandQuery}
-                        selectedIndex={selectedIndex}
-                        scrollRef={scrollRef}
-                        onSelect={setSelectedIndex}
-                        onExecute={handleCommandExecute}
-                    />
-                </box>
-            )}
-
-            {!showCommandMenu && showMentionMenu && (
-              <box
-                position="absolute"
-                bottom="100%"
-                left={0}
-                width="100%"
-                backgroundColor={colors.surface}
-                zIndex={10}
-              >
-                <FileMentionMenu
-                  candidates={mentionCandidates}
-                  selectedIndex={mentionSelectedIndex}
-                  scrollRef={mentionScrollRef}
-                  onSelect={setMentionSelectedIndex}
-                  onExecute={handleMentionExecute}
-                />
-              </box>
-            )}
-          {/* Keep focus while the command menu is open; yield when a dialog is on top. */}
+          {showCommandMenu && (
+            <box
+              position="absolute"
+              bottom="100%"
+              left={0}
+              width="100%"
+              backgroundColor={colors.surface}
+              zIndex={10}
+            >
+              <CommandMenu
+                query={commandQuery}
+                selectedIndex={selectedIndex}
+                scrollRef={scrollRef}
+                onSelect={setSelectedIndex}
+                onExecute={handleCommandExecute}
+              />
+            </box>
+          )}
+          {!showCommandMenu && showMentionMenu && (
+            <box
+              position="absolute"
+              bottom="100%"
+              left={0}
+              width="100%"
+              backgroundColor={colors.surface}
+              zIndex={10}
+            >
+              <FileMentionMenu
+                candidates={mentionCandidates}
+                selectedIndex={mentionSelectedIndex}
+                scrollRef={mentionScrollRef}
+                onSelect={setMentionSelectedIndex}
+                onExecute={handleMentionExecute}
+              />
+            </box>
+          )}
           <textarea
             ref={textareaRef}
-            focused={!disabled && (isTopLayer("base") || isTopLayer("command"))}
+            focused={
+              !disabled && 
+              (isTopLayer("base") || isTopLayer("command") || isTopLayer("mention"))
+            }
             keyBindings={TEXTAREA_KEY_BINDINGS}
             onContentChange={handleTextareaContentChange}
-            placeholder="Ask anything..."
+            placeholder={`Ask anything... "Fix a bug in the database"`}
           />
           <StatusBar />
         </box>
       </box>
     </box>
   );
-}
+};

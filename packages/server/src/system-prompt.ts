@@ -1,19 +1,18 @@
 /**
- * System prompt builder for the agent loop (Phase 8).
+ * System prompt builder for the agent loop (Phase 8+, tools execute on CLI in Phase 11).
  *
  * Injected into every `streamText` call via the `system` option. Content varies
  * by {@link Mode}:
  * - PLAN — read-only tools; emphasizes analysis and planning, forbids writes
  * - BUILD — full toolset including writeFile, editFile, bash
  *
- * `cwd` is reserved for future per-session path context in the prompt; tool
- * sandboxing already uses session.cwd at the tool layer.
+ * Tool invocations are streamed from the server but executed in the user's local
+ * project directory by the CLI ({@link executeLocalTool}).
  */
-import type { Mode } from "@mocode/database/enums";
+import type { ModeType } from "@mocode/shared";
 
 type SystemPromptParams = {
-    cwd: string | null;
-    mode: Mode;
+    mode: ModeType;
 }
 
 /** Assembles mode-specific instructions, tool rules, and response format. */
@@ -65,7 +64,7 @@ export function buildSystemPrompt({
   4. **Plan** — Formulate a concrete plan (PLAN mode) or execution steps (BUILD mode)
   5. **Execute & Verify** — (BUILD mode only) Make changes and validate results`);
   
-    // ── Tool list + usage rules (must stay in sync with createTools) ──
+    // ── Tool list + usage rules (must stay in sync with getToolContracts) ──
     if (mode === "PLAN") {
       parts.push(`
   # Available Tools (PLAN Mode)

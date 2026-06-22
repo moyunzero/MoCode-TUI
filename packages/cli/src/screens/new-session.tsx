@@ -6,12 +6,12 @@ import { z } from "zod";
 import { useToast } from "../providers/toast";
 import { apiClient } from "../lib/api-client";
 import { getErrorMessage } from "../lib/http-errors";
-import { Mode } from "@mocode/database/enums";
+import { Mode, modeSchema } from "@mocode/shared";
 
 /** Router state passed from the home screen when the user submits a prompt. */
 const newSessionStateSchema = z.object({
     message: z.string(),
-    mode: z.enum(Mode),
+    mode: modeSchema,
     model: z.string(),
 });
 
@@ -43,21 +43,13 @@ export function NewSession() {
                 const response = await apiClient.sessions.$post({
                     json:{
                         title:state.message.slice(0,100),
-                        // cwd enables agent tools on the server for this session.
-                        cwd:process.cwd(),
-                        initialMessage:{
-                            role:"USER",
-                            content:state.message,
-                            model:state.model,
-                            mode:state.mode,
-                        },
                     },
                 });
                 if(ignore) return;
                 if(!response.ok) throw new Error(await getErrorMessage(response));
                 const session = await response.json();
                 // Pass the created session via router state to avoid an immediate refetch.
-                navigate(`/sessions/${session.id}`, { replace: true, state: { session } });
+                navigate(`/sessions/${session.id}`, { replace: true, state: { session, initialPrompt: state } });
             }catch(error){
                 if(ignore) return;
                 toast.show({
