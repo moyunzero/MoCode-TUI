@@ -139,16 +139,22 @@ export async function executeLocalTool(toolName: string, input: unknown, mode: M
       if (!(await git.checkIsRepo())) throw new Error("Not a git repository");
 
       const status = await git.status();
+      const unstaged =
+        status.modified.length +
+        status.deleted.length +
+        status.renamed.length +
+        status.created.length +
+        status.conflicted.length;
       return {
         branch: status.current,
         tracking: status.tracking ?? null,
         clean: status.isClean(),
         staged: status.staged.length,
-        unstaged: status.modified.length + status.deleted.length,
+        unstaged,
         untracked: status.not_added.length,
         summary: status.isClean()
           ? `On branch ${status.current}: working tree clean`
-          : `On branch ${status.current}: ${status.staged.length} staged, ${status.modified.length} modified, ${status.not_added.length} untracked`,
+          : `On branch ${status.current}: ${status.staged.length} staged, ${unstaged} unstaged, ${status.not_added.length} untracked`,
       };
     }
     case "gitDiff": {

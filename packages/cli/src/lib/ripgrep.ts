@@ -41,9 +41,15 @@ export async function runRipgrep(
   const binary = resolveRgBinary();
   // --no-require-git: apply .gitignore even outside a git repo (Phase 01 / HARNESS-01).
   // Without it, ripgrep ignores .gitignore in temp dirs and non-git project roots.
-  const args = ["--line-number", "--no-heading", "--color=never", "--no-require-git"];
+  const args = [
+    "--line-number",
+    "--no-heading",
+    "--color=never",
+    "--no-require-git",
+    "--with-filename",
+  ];
   if (include) args.push("--glob", include);
-  args.push(pattern, resolved);
+  args.push("--", pattern, resolved);
 
   const proc = Bun.spawn([binary, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr] = await Promise.all([

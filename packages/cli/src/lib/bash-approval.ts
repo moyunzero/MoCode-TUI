@@ -17,8 +17,8 @@ export type BashApprovalVerdict = "approve-once" | "reject" | "allow-session";
  * unusual quoting may bypass these regexes — blocklist is a safety net, not a sandbox.
  */
 const BLOCKLIST: RegExp[] = [
-  /\brm\s+[^\n]*(-r|--recursive|-rf|-fr)\b/, // recursive delete (rm -rf, rm -r, etc.)
-  /\bgit\s+push\s+[^\n]*(-f|--force)\b/, // force-push over remote history
+  /\brm\s+[^\n]*(?:--recursive\b|-[^\s-]*[rR][^\s-]*)/, // recursive delete (rm -rf, rm -R, etc.)
+  /\bgit\s+push\s+[^\n]*(?:-f\b|--force\b|\+\S+)/, // force-push (-f, --force, +ref)
   /\bgit\s+reset\s+[^\n]*--hard\b/, // discard working tree + index
   /\bchmod\s+[^\n]*(-R|--recursive)\b/, // recursive permission changes
   /\b(curl|wget)\s+[^\n]*\|\s*(ba)?sh\b/, // pipe remote script directly into shell

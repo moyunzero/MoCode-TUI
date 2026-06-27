@@ -123,35 +123,32 @@ export function useChat(sessionId: string, initialMessages: Message[]) {
     async onToolCall({ toolCall }) {
       if (toolCall.dynamic) return;
 
-      const mode = chat.messages.at(-1)?.metadata?.mode ?? Mode.BUILD;
-
-      // ── Phase 01 bash approval gate (HARNESS-03) ──────────────────────────────
-      // Only BUILD mode + blocklisted commands pause here. PLAN mode has no bash tool.
-      // Flow: requiresApproval → requestBashApproval (modal) → verdict:
-      //   • reject       → output-error with BASH_REJECT_ERROR_TEXT (no executeLocalTool)
-      //   • approve-once → fall through to executeLocalTool
-      //   • allow-session→ rememberSessionAllow, then executeLocalTool
-      // Never await addToolOutput inside onToolCall — AI SDK manages tool loop state.
-      if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
-        const { command } = toolInputSchemas.bash.parse(toolCall.input);
-        if (requiresApproval(command, sessionAllowRef.current)) {
-          const verdict = await requestBashApproval(dialog, command);
-          if (verdict === "reject") {
-            chat.addToolOutput({
-              tool: "bash",
-              toolCallId: toolCall.toolCallId,
-              state: "output-error",
-              errorText: BASH_REJECT_ERROR_TEXT,
-            });
-            return;
-          }
-          if (verdict === "allow-session") {
-            rememberSessionAllow(sessionAllowRef.current, command);
-          }
-        }
-      }
+      // Tool-continuation assistant messages may omit metadata — scan backward like transport.
+      const mode =
+        chat.messages.findLast((message) => message.metadata?.mode)?.metadata?.mode ??
+        Mode.BUILD;
 
       try {
+        // ── Phase 01 bash approval gate (HARNESS-03) ────────────────────────────
+        if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
+          const { command } = toolInputSchemas.bash.parse(toolCall.input);
+          if (requiresApproval(command, sessionAllowRef.current)) {
+            const verdict = await requestBashApproval(dialog, command);
+            if (verdict === "reject") {
+              chat.addToolOutput({
+                tool: "bash",
+                toolCallId: toolCall.toolCallId,
+                state: "output-error",
+                errorText: BASH_REJECT_ERROR_TEXT,
+              });
+              return;
+            }
+            if (verdict === "allow-session") {
+              rememberSessionAllow(sessionAllowRef.current, command);
+            }
+          }
+        }
+
         const output = await executeLocalTool(toolCall.toolName, toolCall.input, mode);
         chat.addToolOutput({
           tool: toolCall.toolName as keyof ChatTools,

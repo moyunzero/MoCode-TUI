@@ -59,6 +59,7 @@ export const toolInputSchemas = {
     staged: z.boolean().optional().describe("When true, show staged diff only"),
     ref: z
       .string()
+      .refine((value) => !value.startsWith("-") && !/[\0\r\n]/.test(value))
       .optional()
       .describe(
         "Branch or commit SHA to compare working tree against (ignored when staged is true)",

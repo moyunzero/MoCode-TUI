@@ -4,7 +4,7 @@ MoCode separates **who enforces permissions** from **who invokes shell commands*
 
 ## CLI TUI is the permission gate
 
-Dangerous bash commands are blocked by a **blocklist** in the CLI (`use-chat.ts`), not by the model asking in chat. When a command matches the blocklist:
+Dangerous bash commands are blocked by a **blocklist** in the CLI (`packages/cli/src/lib/bash-approval.ts`, via `requiresApproval()` called from `use-chat.ts`), not by the model asking in chat. When a command matches the blocklist:
 
 1. Execution pauses before the command runs.
 2. A TUI modal appears: **Approve once** / **Reject** / **Allow for this session**.

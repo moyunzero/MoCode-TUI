@@ -29,16 +29,27 @@ describe("supportedChatModelIdSchema", () => {
 });
 
 describe("getToolContracts", () => {
-  test("PLAN includes gitStatus and gitDiff", () => {
+  test("PLAN exposes read-only tools only", () => {
     const tools = getToolContracts(Mode.PLAN);
-    expect(Object.keys(tools)).toContain("gitStatus");
-    expect(Object.keys(tools)).toContain("gitDiff");
+    expect(Object.keys(tools).sort()).toEqual(
+      ["glob", "grep", "gitDiff", "gitStatus", "listDirectory", "readFile"].sort(),
+    );
   });
 
-  test("BUILD includes git tools plus write/bash", () => {
+  test("BUILD exposes read-only tools plus write/bash", () => {
     const tools = getToolContracts(Mode.BUILD);
-    expect(Object.keys(tools)).toContain("gitStatus");
-    expect(Object.keys(tools)).toContain("gitDiff");
-    expect(Object.keys(tools)).toContain("bash");
+    expect(Object.keys(tools).sort()).toEqual(
+      [
+        "bash",
+        "editFile",
+        "glob",
+        "grep",
+        "gitDiff",
+        "gitStatus",
+        "listDirectory",
+        "readFile",
+        "writeFile",
+      ].sort(),
+    );
   });
 });

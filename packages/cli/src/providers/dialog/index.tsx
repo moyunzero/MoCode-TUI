@@ -28,25 +28,33 @@ type DialogProviderProps = {
 
 export function DialogProvider({ children }: DialogProviderProps) {
     const [currentDialog,setCurrentDialog] = useState<DialogConfig | null>(null);
+    const currentDialogRef = useRef<DialogConfig | null>(null);
     const { push, pop } = useKeyboardLayer();
 
     const close = useCallback(()=>{
-        setCurrentDialog((prev) => {
-            // onClose runs before state clears — bash approval uses this for Esc → reject.
-            prev?.onClose?.();
-            return null;
-        });
+        const dialog = currentDialogRef.current;
+        currentDialogRef.current = null;
+        setCurrentDialog(null);
+        dialog?.onClose?.();
         pop("dialog");
     },[pop]);
 
     const open = useCallback((config:DialogConfig)=>{
+        if (currentDialogRef.current) {
+            const previous = currentDialogRef.current;
+            currentDialogRef.current = null;
+            setCurrentDialog(null);
+            previous.onClose?.();
+            pop("dialog");
+        }
+        currentDialogRef.current = config;
         setCurrentDialog(config);
         // Ctrl+C on a dialog dismisses it instead of quitting the app.
         push("dialog",()=>{
             close();
             return true;
         });
-    },[close,push]);
+    },[close,pop]);
 
     const value: DialogContextValue = {
         open,

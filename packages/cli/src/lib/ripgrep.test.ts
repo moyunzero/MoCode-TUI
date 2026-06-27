@@ -28,11 +28,29 @@ describe("runRipgrep", () => {
   });
 
   test("respects .gitignore and excludes node_modules matches", async () => {
-    const binary = resolveRgBinary();
     const result = await runRipgrep(tempDir, tempDir, "needle");
 
     const files = result.matches.map((m) => m.file);
     expect(files).toContain("visible.txt");
     expect(files.some((f) => f.includes("node_modules"))).toBe(false);
+  });
+
+  test("parses single-file search with file:line:content shape", async () => {
+    const file = join(tempDir, "visible.txt");
+    const result = await runRipgrep(tempDir, file, "needle");
+
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]).toMatchObject({
+      file: "visible.txt",
+      line: 1,
+      content: "needle visible",
+    });
+  });
+
+  test("treats leading-dash patterns as literal search text", async () => {
+    await writeFile(join(tempDir, "flags.txt"), "--files\n");
+    const result = await runRipgrep(tempDir, tempDir, "--files");
+
+    expect(result.matches.some((m) => m.file.endsWith("flags.txt"))).toBe(true);
   });
 });
