@@ -3,18 +3,23 @@ export function scrollIndexIntoView(
   scrollbox: { scrollTop: number; scrollTo: (position: number) => void },
   index: number,
   pageSize: number,
+  itemRowHeight = 1,
 ): void {
   if (pageSize <= 0) return;
 
   const scrollTop = scrollbox.scrollTop;
-  if (index < scrollTop) {
-    scrollbox.scrollTo(index);
+  const viewportRows = pageSize * itemRowHeight;
+  const itemTop = index * itemRowHeight;
+  const itemBottom = itemTop + itemRowHeight - 1;
+
+  if (itemTop < scrollTop) {
+    scrollbox.scrollTo(itemTop);
     return;
   }
 
-  const lastVisible = scrollTop + pageSize - 1;
-  if (index > lastVisible) {
-    scrollbox.scrollTo(index - pageSize + 1);
+  const lastVisibleRow = scrollTop + viewportRows - 1;
+  if (itemBottom > lastVisibleRow) {
+    scrollbox.scrollTo(Math.max(0, itemBottom - viewportRows + 1));
   }
 }
 

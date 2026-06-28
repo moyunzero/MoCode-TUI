@@ -11,6 +11,7 @@ export const sessionLocationSchema = z.object({
       model: supportedChatModelIdSchema,
     })
     .optional(),
+  local: z.boolean().optional(),
 });
 
 /** Coerce persisted session JSON into chat messages; empty when malformed. */

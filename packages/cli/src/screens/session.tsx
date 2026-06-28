@@ -15,8 +15,11 @@ import { usePromptConfig } from "../providers/prompt-config";
 import type { Message } from "../hooks/use-chat";
 import { apiClient } from "../lib/api-client";
 import { getErrorMessage } from "../lib/http-errors";
+import { isLocalMode } from "../lib/local-mode";
+import { getLocalSession } from "../lib/local-sessions";
 import { useKeyboardLayer } from "../providers/keyboard-layer";
 import { parseInitialMessages, sessionLocationSchema } from "../lib/session-navigation";
+import { initMcpOnSessionMount } from "../mcp/session-mcp";
 
 /**
  * Phase 11 session screen.
@@ -69,6 +72,10 @@ function SessionChat({
     initialMessages
   );
   const hasSubmittedInitialPromptRef = useRef(false);
+
+  useEffect(() => {
+    return initMcpOnSessionMount(process.cwd());
+  }, []);
 
   // Stop the pending reply when the user leaves this session.
   useEffect(() => {
@@ -129,6 +136,7 @@ export function Session() {
     return {
       session: parsed.data.session as SessionData,
       initialPrompt: parsed.data.initialPrompt,
+      local: parsed.data.local,
     };
   }, [location.state]);
 
@@ -143,6 +151,22 @@ export function Session() {
     if (!id) return;
 
     let ignore = false;
+
+    if (isLocalMode() || prefetched?.local) {
+      const localSession = getLocalSession(id);
+      if (ignore) return;
+      if (!localSession) {
+        toast.show({
+          variant: "error",
+          message: "Local session not found",
+        });
+        navigate("/", { replace: true });
+        return;
+      }
+      setSession(localSession as SessionData);
+      return;
+    }
+
     const fetchSession = async () => {
       try {
         const res = await apiClient.sessions[":id"].$get({ 

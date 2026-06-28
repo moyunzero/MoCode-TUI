@@ -1,6 +1,7 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { runTerminalSetupFromArgv } from "./terminal-setup";
+import { parseCliArgs, setLocalMode } from "./lib/local-mode";
 import {
   disableTerminalKeyboardProtocols,
   enableTerminalKeyboardProtocols,
@@ -15,6 +16,11 @@ import { Session } from "./screens/session";
 // Handle `--terminal-setup` before booting the TUI (macOS Apple Terminal only).
 if (runTerminalSetupFromArgv(process.argv.slice(2))) {
   process.exit(0);
+}
+
+const { local } = parseCliArgs(process.argv.slice(2));
+if (local) {
+  setLocalMode(true);
 }
 
 const router = createMemoryRouter([

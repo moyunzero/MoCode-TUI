@@ -3,7 +3,9 @@ import {
   ThemeDialogContent, 
   AgentsDialogContent, 
   SessionDialogContent,
-  ModelsDialogContent
+  ModelsDialogContent,
+  KeysWizardDialogContent,
+  McpDialogContent,
 } from "../dialogs";
 import { SUPPORTED_CHAT_MODELS } from "@mocode/shared";
 
@@ -61,6 +63,28 @@ export const COMMANDS: Command[] = [
       ctx.dialog.open({
         title: "Select Session",
         children: <SessionDialogContent />
+      });
+    },
+  },
+  {
+    name: "mcp",
+    description: "Manage MCP servers",
+    value: "/mcp",
+    action: (ctx) => {
+      ctx.dialog.open({
+        title: "MCP Servers",
+        children: <McpDialogContent />,
+      });
+    },
+  },
+  {
+    name: "keys",
+    description: "Configure API keys",
+    value: "/keys",
+    action: (ctx) => {
+      ctx.dialog.open({
+        title: "API Keys",
+        children: <KeysWizardDialogContent />,
       });
     },
   },

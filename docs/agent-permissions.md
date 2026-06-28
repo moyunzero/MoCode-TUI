@@ -24,3 +24,4 @@ In Build mode the model should:
 ## Plan mode
 
 Plan mode has no bash tool. Git inspection uses read-only `gitStatus` and `gitDiff` tools instead.
+ 

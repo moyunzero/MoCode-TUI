@@ -20,6 +20,11 @@
  * - Session is not persisted until all tool calls in the response have output
  *   ({@link hasPendingToolCalls} gate in `onFinish`)
  *
+ * Phase 02 MCP (D-06):
+ * - CLI sends `mcpTools` JSON schemas in submit body (from McpManager.getToolDefinitions)
+ * - Server merges via {@link deserializeMcpToolsToDynamic} — no MCP SDK on server
+ * - MCP tool calls execute only in CLI `executeMcpToolCall`
+ *
  * Persists USER / ASSISTANT rows to the database. Interrupted streams save partial
  * ASSISTANT content. Resume replays generation when the last stored message is USER-only.
  */
@@ -38,7 +43,8 @@ import { db } from "@mocode/database/client";
 import type { Prisma } from "@mocode/database";
 import { 
   getToolContracts, 
-  modeSchema, 
+  modeSchema,
+  deserializeMcpToolsToDynamic,
   type ModeType, 
   type ToolContracts
 } from "@mocode/shared";
@@ -58,6 +64,13 @@ type ChatMessageMetadata = {
 
 type MocodeUIMessage = UIMessage<ChatMessageMetadata, never, InferUITools<ToolContracts>>;
 
+/** Wire payload for one MCP tool schema — mirrors CLI SerializedMcpTool (no execute fn). */
+const mcpToolSchema = z.object({
+  name: z.string().regex(/^mcp__[^_].+__.+$/, "Invalid MCP tool name"),
+  description: z.string().optional(),
+  inputSchema: z.unknown().optional(),
+});
+
 const submitSchema = z.object({
   id: z.string(),
   messages: z
@@ -69,6 +82,7 @@ const submitSchema = z.object({
     .min(1),
   mode: modeSchema,
   model: z.string().refine(isSupportedChatModel, "Unsupported model"),
+  mcpTools: z.array(mcpToolSchema).optional(),
 });
 
 const submitValidator = zValidator("json", submitSchema, (result, c) => {
@@ -96,7 +110,7 @@ const app = new Hono<AuthenticatedEnv>()
     submitValidator,
     async (c) => {
       const userId = c.get("userId");
-      const { id, messages, mode, model } = c.req.valid("json");
+      const { id, messages, mode, model, mcpTools } = c.req.valid("json");
 
       const session = await db.session.findUnique({
         where: { id, userId },
@@ -107,8 +121,11 @@ const app = new Hono<AuthenticatedEnv>()
       }
 
       const startTime = Date.now();
-      // Tool contracts only — executors live in CLI `executeLocalTool` (Phase 11).
-      const tools = getToolContracts(mode);
+      // Tool contracts only — executors live in CLI (Phase 11). MCP schemas merged from CLI wire payload (D-06).
+      const tools = {
+        ...getToolContracts(mode),
+        ...deserializeMcpToolsToDynamic(mcpTools),
+      };
       const resolvedModel = resolveChatModel(model);
       const previousMessages = Array.isArray(session.messages)
         ? (session.messages as unknown as MocodeUIMessage[])

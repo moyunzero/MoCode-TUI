@@ -4,9 +4,14 @@ import { UserMessage } from "../components/messages";
 import { SessionShell } from "../components/session-shell";
 import { z } from "zod";
 import { useToast } from "../providers/toast";
+import { useDialog } from "../providers/dialog";
 import { apiClient } from "../lib/api-client";
 import { getErrorMessage } from "../lib/http-errors";
-import { Mode, modeSchema } from "@mocode/shared";
+import { findSupportedChatModel, Mode, modeSchema } from "@mocode/shared";
+import { isLocalMode } from "../lib/local-mode";
+import { createLocalSession } from "../lib/local-sessions";
+import { hasRequiredKeys } from "../lib/keys";
+import { openKeysWizardIfNeeded } from "../lib/keys-wizard-trigger";
 
 /** Router state passed from the home screen when the user submits a prompt. */
 const newSessionStateSchema = z.object({
@@ -19,6 +24,7 @@ export function NewSession() {
     const navigate = useNavigate();
     const location = useLocation();
     const toast = useToast();
+    const dialog = useDialog();
     // Prevent double POST when React Strict Mode re-runs effects in development.
     const hasStartedRef = useRef(false);
 
@@ -40,6 +46,27 @@ export function NewSession() {
         let ignore = false;
         const createSession = async () => {
             try{
+                if (isLocalMode()) {
+                    const model = findSupportedChatModel(state.model);
+                    if (!model) {
+                        throw new Error(`Unsupported chat model: ${state.model}`);
+                    }
+                    const provider = model.provider;
+                    if (!hasRequiredKeys(provider)) {
+                        openKeysWizardIfNeeded(dialog, { provider });
+                        if (ignore) return;
+                        navigate("/", { replace: true });
+                        return;
+                    }
+                    const session = createLocalSession(state.message.slice(0, 100));
+                    if (ignore) return;
+                    navigate(`/sessions/${session.id}`, {
+                        replace: true,
+                        state: { session, initialPrompt: state, local: true },
+                    });
+                    return;
+                }
+
                 const response = await apiClient.sessions.$post({
                     json:{
                         title:state.message.slice(0,100),
@@ -63,7 +90,7 @@ export function NewSession() {
         return ()=>{
             ignore = true;
         };
-    },[state,navigate,toast]);
+    },[state,navigate,toast,dialog]);
 
 
     if(!state) return null;

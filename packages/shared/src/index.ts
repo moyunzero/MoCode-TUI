@@ -18,3 +18,8 @@ export {
   type ToolContracts,
   type ModeType,
 } from "./schemas";
+
+export {
+  deserializeMcpToolsToDynamic,
+  type SerializedMcpTool,
+} from "./mcp-tools";

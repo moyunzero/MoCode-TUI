@@ -1,5 +1,5 @@
 /** Modal overlay provider; pushes a "dialog" keyboard layer while open. */
-import { createContext, useContext, useState, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useCallback, useRef, useMemo } from "react";
 import type { ReactNode } from "react";
 import { TextAttributes,RGBA } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
@@ -56,10 +56,13 @@ export function DialogProvider({ children }: DialogProviderProps) {
         });
     },[close,pop]);
 
-    const value: DialogContextValue = {
-        open,
-        close,
-    };
+    const value: DialogContextValue = useMemo(
+        () => ({
+            open,
+            close,
+        }),
+        [open, close],
+    );
     return(
         <DialogContext.Provider value={value}>
             {children}
@@ -104,7 +107,7 @@ function Dialog({ currentDialog, close }: DialogProps) {
             onMouseDown={()=>close()}
         >
             <box
-                width={Math.min(60,dimensions.width - 4)}
+                width={Math.min(72,dimensions.width - 4)}
                 height="auto"
                 backgroundColor={colors.dialogSurface}
                 paddingX={4}

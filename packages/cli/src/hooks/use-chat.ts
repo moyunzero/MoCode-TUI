@@ -16,7 +16,7 @@
  * sends `[previousUser, assistantWithToolCalls]` instead of the full history,
  * because the server merges against stored session messages.
  */
-import { useMemo, useCallback, useRef } from "react";
+import { useMemo, useCallback, useRef, useEffect } from "react";
 import { useChat as useAiChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
@@ -31,7 +31,17 @@ import { getAuth } from "../lib/auth";
 import { executeLocalTool } from "../lib/local-tools";
 import { requiresApproval, rememberSessionAllow } from "../lib/bash-approval";
 import { requestBashApproval } from "../lib/bash-approval-ui";
+import { executeMcpToolCall } from "../lib/mcp-tool-call";
+import { requestMcpApproval } from "../lib/mcp-approval-ui";
+import { getMcpManager } from "../mcp/manager";
+import type { McpManager } from "../mcp/manager";
+import { looksLikeMcpToolName } from "../mcp/heuristics";
 import { useDialog } from "../providers/dialog";
+import { isLocalMode } from "../lib/local-mode";
+import { updateLocalSession } from "../lib/local-sessions";
+import { resolveChatModel } from "../lib/local-model";
+import { LocalChatTransport, stripIncompleteAssistantMessages } from "../lib/local-chat-transport";
+import { buildSystemPrompt } from "../lib/system-prompt";
 
 /**
  * Multi-sentence model guidance returned when the user rejects a blocklisted bash command.
@@ -44,9 +54,9 @@ import { useDialog } from "../providers/dialog";
  * 4. Model should acknowledge and suggest alternatives instead of re-asking.
  * 5. Positive retry path: new user message → bash tool call → TUI dialog again.
  * 6. Manual fallback: user runs the command outside the agent.
- * 7. Hard ban: no chat confirmation path exists — do not wait for or solicit typed confirm.
+ * 7. Hard ban: chat cannot unlock retry — do not wait for or solicit typed confirm.
  */
-const BASH_REJECT_ERROR_TEXT =
+export const BASH_REJECT_ERROR_TEXT =
   "User rejected this command in the TUI approval dialog — this is not a runtime failure. " +
   "Do not retry the same command unless the user explicitly requests it again in a new message. " +
   "Do not ask for typed chat confirmation to proceed; chat is not a permission gate and the TUI dialog was the only approval step. " +
@@ -80,8 +90,20 @@ export function useChat(sessionId: string, initialMessages: Message[]) {
   // normalized command string. Owned here (not a global singleton) so each chat session
   // resets on mount and cannot leak across sessions (Phase 01, plan 02).
   const sessionAllowRef = useRef(new Set<string>());
+  // MCP write approval session allowlist — keyed by full `mcp__<server>__<tool>` (Phase 02, D-15).
+  // Separate from bash allowlist because MCP tools are named, not normalized shell strings.
+  const sessionMcpAllowRef = useRef(new Set<string>());
 
   const transport = useMemo(() => {
+    // BYOK: inference + tool schema merge run in-process; MCP execution stays in onToolCall below.
+    if (isLocalMode()) {
+      return new LocalChatTransport<Message>({
+        resolveModel: resolveChatModel,
+        getMcpManager,
+        buildSystemPrompt,
+      });
+    }
+
     return new DefaultChatTransport<Message>({
       api: apiClient.chat.$url().toString(),
       headers() {
@@ -97,6 +119,7 @@ export function useChat(sessionId: string, initialMessages: Message[]) {
         const metadata = messages.findLast(
           (m) => m.metadata?.mode && m.metadata?.model,
         )?.metadata;
+        const requestMode = message.metadata?.mode ?? metadata?.mode ?? Mode.BUILD;
         const previousMessage = messages[messages.length - 2];
         // Tool loop: server already has history; only ship the pair that changed.
         const requestMessages =
@@ -104,12 +127,22 @@ export function useChat(sessionId: string, initialMessages: Message[]) {
             ? [previousMessage, message]
             : [message];
 
+        let mcpTools: ReturnType<McpManager["getToolDefinitions"]> = [];
+        try {
+          mcpTools = getMcpManager().getToolDefinitions(requestMode);
+        } catch (error) {
+          console.error("Failed to load MCP tool definitions", error);
+        }
+
         return {
           body: {
             id: sessionId,
             messages: requestMessages,
-            mode: message.metadata?.mode ?? metadata?.mode,
+            mode: requestMode,
             model: message.metadata?.model ?? metadata?.model,
+            // Phase 02 D-06: CLI discovers MCP tools locally; server merges schemas into streamText only.
+            // Execution remains on CLI — server never calls MCP SDK.
+            mcpTools,
           },
         }
       }
@@ -121,12 +154,55 @@ export function useChat(sessionId: string, initialMessages: Message[]) {
     messages: initialMessages,
     transport,
     async onToolCall({ toolCall }) {
-      if (toolCall.dynamic) return;
-
       // Tool-continuation assistant messages may omit metadata — scan backward like transport.
       const mode =
         chat.messages.findLast((message) => message.metadata?.mode)?.metadata?.mode ??
         Mode.BUILD;
+
+      const isMcpCall = looksLikeMcpToolName(toolCall.toolName);
+      // AI SDK marks tools without static execute as `dynamic`. MCP tools are dynamic but must
+      // still run on the CLI — only skip unrelated dynamic tools we do not own.
+      if (toolCall.dynamic && !isMcpCall) return;
+
+      if (isMcpCall) {
+        // dynamicTool MCP entries are not in ChatTools union — widen addToolOutput for MCP path.
+        const addMcpToolOutput = chat.addToolOutput as (params: {
+          toolCallId: string;
+          state?: "output-available" | "output-error";
+          output?: unknown;
+          errorText?: string;
+        }) => void;
+
+        await executeMcpToolCall(
+          {
+            toolName: toolCall.toolName,
+            toolCallId: toolCall.toolCallId,
+            input: toolCall.input,
+          },
+          {
+            getMcpManager,
+            requestMcpApproval,
+            sessionMcpAllowRef: sessionMcpAllowRef.current,
+            mode,
+            dialog,
+            addToolOutput: (params) => {
+              if (params.state === "output-error") {
+                addMcpToolOutput({
+                  toolCallId: params.toolCallId,
+                  state: "output-error",
+                  errorText: params.errorText ?? "MCP tool call failed",
+                });
+                return;
+              }
+              addMcpToolOutput({
+                toolCallId: params.toolCallId,
+                output: params.output,
+              });
+            },
+          },
+        );
+        return;
+      }
 
       try {
         // ── Phase 01 bash approval gate (HARNESS-03) ────────────────────────────
@@ -166,6 +242,32 @@ export function useChat(sessionId: string, initialMessages: Message[]) {
     },
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  useEffect(() => {
+    if (!isLocalMode()) return;
+    if (chat.status !== "ready") return;
+
+    try {
+      updateLocalSession(sessionId, chat.messages);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Local session not found:")
+      ) {
+        return;
+      }
+      console.error("Failed to persist local session", { sessionId, error });
+    }
+  }, [sessionId, chat.messages, chat.status]);
+
+  useEffect(() => {
+    if (!chat.error || !isLocalMode()) return;
+
+    const pruned = stripIncompleteAssistantMessages(chat.messages);
+    if (pruned.length === chat.messages.length) return;
+
+    chat.setMessages(pruned);
+  }, [chat.error, chat.status, chat.messages, chat.setMessages]);
 
   const submit = useCallback(
     (params: { userText: string; mode: ModeType; model: SupportedChatModelId }) => {
