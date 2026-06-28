@@ -5,5 +5,5 @@
     "jsxImportSource": "@opentui/react",
     "types": ["bun"]
   },
-  "exclude": ["src/lib/hydrate-message-parts.ts", "**/*.test.ts"]
+  "exclude": ["**/*.test.ts"]
 }

@@ -67,3 +67,31 @@ export function scrollToBottomAfterLayout(scrollbox: ScrollboxLike): () => void 
 export function visibleItemCount(itemCount: number, maxVisible: number): number {
   return Math.min(itemCount, maxVisible);
 }
+
+type TranscriptMessage = {
+  parts?: unknown;
+};
+
+/**
+ * Monotonic signal for follow-scroll while streaming — grows when the tail message
+ * gains text even if `messages.length` and `isLoading` stay constant.
+ */
+export function streamingTranscriptScrollSignal(
+  isLoading: boolean,
+  messages: ReadonlyArray<TranscriptMessage>,
+): number {
+  if (!isLoading) return 0;
+
+  const last = messages.at(-1);
+  if (!last || !Array.isArray(last.parts)) return messages.length;
+
+  let signal = messages.length;
+  for (const part of last.parts) {
+    if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
+      signal += part.text.length;
+    } else {
+      signal += 1;
+    }
+  }
+  return signal;
+}

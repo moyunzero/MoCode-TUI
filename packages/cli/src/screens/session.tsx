@@ -30,7 +30,7 @@ import {
   SessionChatActionsProvider,
   useRegisterSessionChatActions,
 } from "../providers/session-chat-actions";
-import { scrollToBottomAfterLayout } from "../utils/list-scroll-nav";
+import { scrollToBottomAfterLayout, streamingTranscriptScrollSignal } from "../utils/list-scroll-nav";
 
 /**
  * Phase 11 session screen.
@@ -198,14 +198,16 @@ function SessionChat({
   const pendingTranscriptReply = isLoading && lastMessage?.role === "user";
   const pendingMode = lastMessage?.metadata?.mode ?? mode;
   const pendingModel = lastMessage?.metadata?.model ?? model;
+  const transcriptScrollSignal = streamingTranscriptScrollSignal(isLoading, messages);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: transcriptScrollSignal re-scrolls during token streaming while isLoading stays true
   useLayoutEffect(() => {
     if (!isLoading) return;
     const scrollbox = transcriptScrollRef.current;
     if (!scrollbox) return;
 
     return scrollToBottomAfterLayout(scrollbox);
-  }, [isLoading]);
+  }, [isLoading, transcriptScrollSignal]);
 
   return (
     <SessionShell

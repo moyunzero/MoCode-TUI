@@ -10,6 +10,7 @@ import {
   shouldShowDurationInFooter,
   shouldShowGeneratingInFooter,
 } from "../../lib/bot-message-footer";
+import { groupConsecutiveParts, partRenderKey } from "../../lib/bot-message-parts";
 import type { LanguageModelUsage } from "ai";
 import prettyMs from "pretty-ms";
 import { EmptyBorder } from "../border";
@@ -86,32 +87,6 @@ function formatBashToolDisplay(input: unknown): BashToolDisplay | null {
   return { command: record.command, description };
 }
 
-type PartGroup = {
-  type: ClientMessagePart["type"];
-  parts: ClientMessagePart[];
-  key: string;
-};
-
-/** Merge adjacent parts of the same type so reasoning/tool blocks stack cleanly. */
-function groupConsecutiveParts(parts: ClientMessagePart[]): PartGroup[] {
-  const groups: PartGroup[] = [];
-
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]!;
-    const lastGroup = groups[groups.length - 1];
-
-     if (lastGroup && lastGroup.type === part.type) {
-      lastGroup.parts.push(part);
-     } else {
-      const key = 
-        isToolPart(part) ? `group-tc-${part.toolCallId}` : `group-${part.type}-${i}`;
-      groups.push({ type: part.type, parts: [part], key });
-     }
-  }
-
-  return groups;
-};
-
 export function BotMessage({ 
   parts,
   model,
@@ -139,11 +114,11 @@ export function BotMessage({
     <box width="100%" alignItems="center">
       {groupConsecutiveParts(parts).map((group, i) => (
         <box key={group.key} width="100%" paddingTop={i === 0 ? 0 : 1}>
-          {group.parts.map((part) => {
+          {group.parts.map((part, partIndex) => {
             if (part.type === "reasoning") {
               return (
                 <box
-                  key={`${group.key}-reasoning-${part.text}`}
+                  key={partRenderKey(group.key, "reasoning", partIndex)}
                   border={["left"]}
                   borderColor={colors.thinkingBorder}
                   customBorderChars={{
@@ -203,7 +178,7 @@ export function BotMessage({
 
             if (part.type === "text") {
               return (
-                <box key={`${group.key}-text-${part.text}`} paddingX={3} width="100%">
+                <box key={partRenderKey(group.key, "text", partIndex)} paddingX={3} width="100%">
                   <text>{part.text}</text>
                 </box>
               );

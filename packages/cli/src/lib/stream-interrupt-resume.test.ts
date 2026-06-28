@@ -118,4 +118,27 @@ describe("resolveAutoResumeRequest", () => {
 
     expect(request).toBeNull();
   });
+
+  test("falls back when last user metadata has an unsupported model id", () => {
+    const request = resolveAutoResumeRequest({
+      messages: [
+        {
+          id: "u1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+          metadata: { mode: Mode.PLAN, model: "retired-model-v99" },
+        },
+      ] as never,
+      status: "ready",
+      hasAutoResumed: false,
+      initialPromptPending: false,
+      fallbackMode: Mode.BUILD,
+      fallbackModel: "gpt-5.4",
+    });
+
+    expect(request).toEqual({
+      mode: Mode.PLAN,
+      model: "gpt-5.4",
+    });
+  });
 });

@@ -1,5 +1,10 @@
 import type { UIMessage } from "ai";
-import { hasVisibleAssistantContent, type ModeType, type SupportedChatModelId } from "@mocode/shared";
+import {
+  findSupportedChatModel,
+  hasVisibleAssistantContent,
+  type ModeType,
+  type SupportedChatModelId,
+} from "@mocode/shared";
 import { stripIncompleteAssistantMessages as stripFromTransport } from "./local-chat-transport";
 
 export const INTERRUPTED_TOOL_ERROR_TEXT = "Interrupted by user";
@@ -124,7 +129,7 @@ export function shouldSkipInterruptedToolOutput(
 /** Trim transcript for /resume — only the last user message gets new mode/model metadata. */
 export function trimMessagesForRegenerate<UI_MESSAGE extends UIMessage>(
   messages: UI_MESSAGE[],
-  params: { mode: ModeType; model: string },
+  params: { mode: ModeType; model: SupportedChatModelId },
 ): UI_MESSAGE[] | null {
   const lastUser = messages.findLast((message) => message.role === "user");
   if (!lastUser) return null;
@@ -146,6 +151,16 @@ export function trimMessagesForRegenerate<UI_MESSAGE extends UIMessage>(
   return trimmed;
 }
 
+function resolveStoredModel(
+  stored: unknown,
+  fallback: SupportedChatModelId,
+): SupportedChatModelId {
+  if (typeof stored === "string" && findSupportedChatModel(stored) != null) {
+    return stored as SupportedChatModelId;
+  }
+  return fallback;
+}
+
 /** Derive auto-resume params from normalized chat state (not raw initialMessages). */
 export function resolveAutoResumeRequest(params: {
   messages: UIMessage[];
@@ -165,11 +180,9 @@ export function resolveAutoResumeRequest(params: {
   if (!shouldAuto) return null;
 
   const lastUser = normalized.findLast((message) => message.role === "user");
-  const lastUserMetadata = lastUser?.metadata as
-    | { mode?: ModeType; model?: SupportedChatModelId }
-    | undefined;
+  const lastUserMetadata = lastUser?.metadata as { mode?: ModeType; model?: unknown } | undefined;
   return {
     mode: lastUserMetadata?.mode ?? params.fallbackMode,
-    model: lastUserMetadata?.model ?? params.fallbackModel,
+    model: resolveStoredModel(lastUserMetadata?.model, params.fallbackModel),
   };
 }
