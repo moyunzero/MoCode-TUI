@@ -95,6 +95,7 @@ export type LocalChatTransportOptions<UI_MESSAGE extends UIMessage> = {
     mode: ModeType;
     mcpToolNames?: string[];
     mcpRequested?: boolean;
+    skills?: Array<{ name: string; description: string }>;
   }) => string;
   onFinish?: (event: LocalChatTransportFinishEvent<UI_MESSAGE>) => Promise<void>;
   cwd?: string;

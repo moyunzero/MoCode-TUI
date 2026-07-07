@@ -45,6 +45,9 @@ import { resolveChatModel } from "../lib/local-model";
 import { LocalChatTransport, stripIncompleteAssistantMessages } from "../lib/local-chat-transport";
 import { hasVisibleAssistantContent } from "@mocode/shared";
 import { buildSystemPrompt } from "../lib/system-prompt";
+import { expandSkillSlashMessage } from "../lib/skills/expand";
+import { loadMergedSkills } from "../lib/skills/loader";
+import { getCachedSkills } from "../lib/skills/registry";
 import {
   collectPendingToolCallIds,
   finalizeInterruptedAssistant,
@@ -155,6 +158,14 @@ function reportPersistError(
   }
 }
 
+function resolveLoadedSkills() {
+  const cached = getCachedSkills();
+  if (cached.length > 0) {
+    return cached;
+  }
+  return loadMergedSkills(process.cwd());
+}
+
 export function useChat(
   sessionId: string,
   initialMessages: Message[],
@@ -186,7 +197,11 @@ export function useChat(
       return new LocalChatTransport({
         resolveModel: resolveChatModel,
         getMcpManager,
-        buildSystemPrompt,
+        buildSystemPrompt: (params) =>
+          buildSystemPrompt({
+            ...params,
+            skills: resolveLoadedSkills(),
+          }),
       }) as ChatTransport<Message>;
     }
 
@@ -569,8 +584,10 @@ export function useChat(
       turnInterruptedRef.current = false;
       setTurnInterrupted(false);
       skipToolOutputIdsRef.current.clear();
+      const skills = resolveLoadedSkills();
+      const userText = expandSkillSlashMessage({ text: params.userText, skills });
       return chat.sendMessage({
-        text: params.userText,
+        text: userText,
         metadata: {
           mode: params.mode,
           model: params.model,
