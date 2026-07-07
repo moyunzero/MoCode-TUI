@@ -146,7 +146,7 @@ export async function runMatchingHooks(
   toolName: string,
   payload: HookPayload,
   hooks: HookEntry[],
-): Promise<BeforeHookResult | void> {
+): Promise<BeforeHookResult | undefined> {
   const matching = hooks.filter(
     (hook) => hook.event === event && matchesToolName(toolName, hook.toolName),
   );

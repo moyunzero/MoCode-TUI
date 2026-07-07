@@ -62,6 +62,10 @@ import {
   LOCAL_WRITE_REJECT_ERROR_TEXT,
 } from "../lib/local-write-approval";
 import { requestLocalWriteApproval } from "../lib/local-write-approval-ui";
+import { runToolPipeline } from "../lib/tool-pipeline";
+import { loadMergedHooksConfig } from "../lib/hooks/loader";
+import { runMatchingHooks, type HookPayload } from "../lib/hooks/runner";
+import { useToast } from "../providers/toast";
 
 /**
  * Multi-sentence model guidance returned when the user rejects a blocklisted bash command.
@@ -157,6 +161,7 @@ export function useChat(
   options?: { onPersistError?: (message: string) => void },
 ) {
   const dialog = useDialog();
+  const toast = useToast();
   // Session-scoped allowlist: "Allow for this session" skips future prompts for the same
   // normalized command string. Owned here (not a global singleton) so each chat session
   // resets on mount and cannot leak across sessions (Phase 01, plan 02).
@@ -168,6 +173,7 @@ export function useChat(
   const skipToolOutputIdsRef = useRef(new Set<string>());
   /** Session allowlist for writeFile/editFile after "Allow for this session". */
   const sessionWriteAllowRef = useRef(new Set<string>());
+  const hooksConfigRef = useRef<ReturnType<typeof loadMergedHooksConfig> | null>(null);
   /** Blocks sendAutomaticallyWhen after Esc finalizes tool output-error parts. */
   const turnInterruptedRef = useRef(false);
   const [turnInterrupted, setTurnInterrupted] = useState(false);
@@ -262,114 +268,193 @@ export function useChat(
         Mode.BUILD;
 
       const isMcpCall = looksLikeMcpToolName(toolCall.toolName);
+
+      // Phase 04 (04-03): Task handler lands later — stub avoids hanging the tool loop.
+      if (toolCall.toolName === "task") {
+        if (shouldSkipToolOutput()) return;
+        chat.addToolOutput({
+          tool: "task",
+          toolCallId: toolCall.toolCallId,
+          state: "output-error",
+          errorText: "Task tool not yet implemented",
+        });
+        return;
+      }
+
       // AI SDK marks tools without static execute as `dynamic`. MCP tools are dynamic but must
       // still run on the CLI — only skip unrelated dynamic tools we do not own.
       if (toolCall.dynamic && !isMcpCall) return;
 
-      if (isMcpCall) {
-        // dynamicTool MCP entries are not in ChatTools union — widen addToolOutput for MCP path.
-        const addMcpToolOutput = chat.addToolOutput as (params: {
-          toolCallId: string;
-          state?: "output-available" | "output-error";
-          output?: unknown;
-          errorText?: string;
-        }) => void;
+      const getHooksConfig = () => {
+        if (!hooksConfigRef.current) {
+          try {
+            hooksConfigRef.current = loadMergedHooksConfig(process.cwd());
+          } catch {
+            hooksConfigRef.current = { hooks: [] };
+          }
+        }
+        return hooksConfigRef.current;
+      };
 
-        await executeMcpToolCall(
-          {
-            toolName: toolCall.toolName,
+      const hooksConfig = getHooksConfig();
+
+      const makeHookPayload = (event: HookPayload["event"]): HookPayload => ({
+        toolName: toolCall.toolName,
+        input: toolCall.input,
+        sessionId,
+        mode,
+        cwd: process.cwd(),
+        event,
+      });
+
+      const addMcpToolOutput = chat.addToolOutput as (params: {
+        toolCallId: string;
+        state?: "output-available" | "output-error";
+        output?: unknown;
+        errorText?: string;
+      }) => void;
+
+      const emitToolError = (errorText: string) => {
+        if (shouldSkipToolOutput()) return;
+        if (isMcpCall) {
+          addMcpToolOutput({
             toolCallId: toolCall.toolCallId,
-            input: toolCall.input,
-          },
-          {
-            getMcpManager,
-            requestMcpApproval,
-            sessionMcpAllowRef: sessionMcpAllowRef.current,
-            mode,
-            dialog,
-            addToolOutput: (params) => {
-              if (shouldSkipToolOutput()) return;
-              if (params.state === "output-error") {
-                addMcpToolOutput({
-                  toolCallId: params.toolCallId,
-                  state: "output-error",
-                  errorText: params.errorText ?? "MCP tool call failed",
-                });
-                return;
-              }
-              addMcpToolOutput({
-                toolCallId: params.toolCallId,
-                output: params.output,
-              });
-            },
-          },
-        );
-        return;
-      }
-
-      try {
-        // ── Phase 01 bash approval gate (HARNESS-03) ────────────────────────────
-        if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
-          const { command } = toolInputSchemas.bash.parse(toolCall.input);
-          if (requiresApproval(command, sessionAllowRef.current)) {
-            const verdict = await requestBashApproval(dialog, command);
-            if (verdict === "reject") {
-              if (shouldSkipToolOutput()) return;
-              chat.addToolOutput({
-                tool: "bash",
-                toolCallId: toolCall.toolCallId,
-                state: "output-error",
-                errorText: BASH_REJECT_ERROR_TEXT,
-              });
-              return;
-            }
-            if (verdict === "allow-session") {
-              rememberSessionAllow(sessionAllowRef.current, command);
-            }
-          }
+            state: "output-error",
+            errorText,
+          });
+          return;
         }
-
-        if (
-          requiresLocalWriteApproval(
-            toolCall.toolName,
-            mode,
-            sessionWriteAllowRef.current,
-          )
-        ) {
-          const verdict = await requestLocalWriteApproval(
-            dialog,
-            toolCall.toolName,
-            toolCall.input,
-          );
-          if (verdict === "reject") {
-            if (shouldSkipToolOutput()) return;
-            chat.addToolOutput({
-              tool: toolCall.toolName as keyof ChatTools,
-              toolCallId: toolCall.toolCallId,
-              state: "output-error",
-              errorText: LOCAL_WRITE_REJECT_ERROR_TEXT,
-            });
-            return;
-          }
-          if (verdict === "allow-session") {
-            sessionWriteAllowRef.current.add(toolCall.toolName);
-          }
-        }
-        const output = await executeLocalTool(toolCall.toolName, toolCall.input, mode);
-        if (shouldSkipToolOutput()) return;
-        chat.addToolOutput({
-          tool: toolCall.toolName as keyof ChatTools,
-          toolCallId: toolCall.toolCallId,
-          output,
-        });
-      } catch (error) {
-        if (shouldSkipToolOutput()) return;
         chat.addToolOutput({
           tool: toolCall.toolName as keyof ChatTools,
           toolCallId: toolCall.toolCallId,
           state: "output-error",
-          errorText: error instanceof Error ? error.message : String(error),
+          errorText,
         });
+      };
+
+      try {
+        const pipelineResult = await runToolPipeline({
+          toolCall: {
+            toolName: toolCall.toolName,
+            toolCallId: toolCall.toolCallId,
+            input: toolCall.input,
+          },
+          beforeHook: async () => {
+            const hookResult = await runMatchingHooks(
+              "beforeToolCall",
+              toolCall.toolName,
+              makeHookPayload("beforeToolCall"),
+              hooksConfig.hooks,
+            );
+            if (hookResult && !hookResult.allowed) {
+              return { allowed: false, reason: hookResult.reason };
+            }
+            return { allowed: true };
+          },
+          approvalGate: async () => {
+            if (isMcpCall) {
+              return { approved: true };
+            }
+
+            if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
+              const { command } = toolInputSchemas.bash.parse(toolCall.input);
+              if (requiresApproval(command, sessionAllowRef.current)) {
+                const verdict = await requestBashApproval(dialog, command);
+                if (verdict === "reject") {
+                  return { approved: false, reason: BASH_REJECT_ERROR_TEXT };
+                }
+                if (verdict === "allow-session") {
+                  rememberSessionAllow(sessionAllowRef.current, command);
+                }
+              }
+            }
+
+            if (
+              requiresLocalWriteApproval(
+                toolCall.toolName,
+                mode,
+                sessionWriteAllowRef.current,
+              )
+            ) {
+              const verdict = await requestLocalWriteApproval(
+                dialog,
+                toolCall.toolName,
+                toolCall.input,
+              );
+              if (verdict === "reject") {
+                return { approved: false, reason: LOCAL_WRITE_REJECT_ERROR_TEXT };
+              }
+              if (verdict === "allow-session") {
+                sessionWriteAllowRef.current.add(toolCall.toolName);
+              }
+            }
+
+            return { approved: true };
+          },
+          executeTool: async () => {
+            if (isMcpCall) {
+              await executeMcpToolCall(
+                {
+                  toolName: toolCall.toolName,
+                  toolCallId: toolCall.toolCallId,
+                  input: toolCall.input,
+                },
+                {
+                  getMcpManager,
+                  requestMcpApproval,
+                  sessionMcpAllowRef: sessionMcpAllowRef.current,
+                  mode,
+                  dialog,
+                  addToolOutput: (params) => {
+                    if (shouldSkipToolOutput()) return;
+                    if (params.state === "output-error") {
+                      addMcpToolOutput({
+                        toolCallId: params.toolCallId,
+                        state: "output-error",
+                        errorText: params.errorText ?? "MCP tool call failed",
+                      });
+                      return;
+                    }
+                    addMcpToolOutput({
+                      toolCallId: params.toolCallId,
+                      output: params.output,
+                    });
+                  },
+                },
+              );
+              return;
+            }
+
+            const output = await executeLocalTool(toolCall.toolName, toolCall.input, mode);
+            if (shouldSkipToolOutput()) return;
+            chat.addToolOutput({
+              tool: toolCall.toolName as keyof ChatTools,
+              toolCallId: toolCall.toolCallId,
+              output,
+            });
+          },
+          afterHook: async () => {
+            await runMatchingHooks(
+              "afterToolCall",
+              toolCall.toolName,
+              makeHookPayload("afterToolCall"),
+              hooksConfig.hooks,
+            );
+          },
+        });
+
+        if (pipelineResult.blocked) {
+          const errorText = pipelineResult.reason ?? "Tool execution blocked";
+          emitToolError(errorText);
+          if (pipelineResult.blockedBy === "hook") {
+            toast.show({
+              variant: "error",
+              message: `Hook blocked ${toolCall.toolName}: ${errorText}`,
+            });
+          }
+        }
+      } catch (error) {
+        emitToolError(error instanceof Error ? error.message : String(error));
       }
     },
     sendAutomaticallyWhen: (params) => {
