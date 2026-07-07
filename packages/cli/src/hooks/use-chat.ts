@@ -69,6 +69,8 @@ import { runToolPipeline } from "../lib/tool-pipeline";
 import { loadMergedHooksConfig } from "../lib/hooks/loader";
 import { runMatchingHooks, type HookPayload } from "../lib/hooks/runner";
 import { useToast } from "../providers/toast";
+import { executeTaskTool } from "../lib/subagent/runner";
+import type { SubagentType } from "../lib/subagent/types";
 
 /**
  * Multi-sentence model guidance returned when the user rejects a blocklisted bash command.
@@ -188,6 +190,9 @@ export function useChat(
   /** Blocks sendAutomaticallyWhen after Esc finalizes tool output-error parts. */
   const turnInterruptedRef = useRef(false);
   const [turnInterrupted, setTurnInterrupted] = useState(false);
+  /** Active subagent run — Esc aborts via linked AbortController (D-10). */
+  const subagentAbortRef = useRef<AbortController | null>(null);
+  const [subagentRunning, setSubagentRunning] = useState(false);
   const onPersistErrorRef = useRef(options?.onPersistError);
   onPersistErrorRef.current = options?.onPersistError;
 
@@ -269,6 +274,54 @@ export function useChat(
     });
   }, [sessionId]);
 
+  const runTaskSubagent = useCallback(
+    async (params: {
+      input: unknown;
+      mode: ModeType;
+      model?: SupportedChatModelId | string;
+      toolCallId?: string;
+      shouldSkipOutput?: () => boolean;
+      addOutput?: (result: {
+        summary: string;
+        error?: boolean;
+        interrupted?: boolean;
+      }) => void;
+    }) => {
+      const controller = new AbortController();
+      subagentAbortRef.current = controller;
+      setSubagentRunning(true);
+
+      try {
+        const result = await executeTaskTool({
+          input: params.input,
+          mode: params.mode,
+          model: params.model,
+          sessionId,
+          abortSignal: controller.signal,
+          deps: {
+            getMcpManager,
+            dialog,
+            cwd: process.cwd(),
+          },
+        });
+
+        if (params.addOutput) {
+          if (params.shouldSkipOutput?.()) {
+            return result;
+          }
+          params.addOutput(result);
+          return result;
+        }
+
+        return result;
+      } finally {
+        subagentAbortRef.current = null;
+        setSubagentRunning(false);
+      }
+    },
+    [dialog, sessionId],
+  );
+
   const chat = useAiChat<Message>({
     id: sessionId,
     messages: initialMessages,
@@ -284,14 +337,35 @@ export function useChat(
 
       const isMcpCall = looksLikeMcpToolName(toolCall.toolName);
 
-      // Phase 04 (04-03): Task handler lands later — stub avoids hanging the tool loop.
+      // Phase 04 (04-03): Task subagent — synchronous blocking, summary-only (D-03, D-04).
       if (toolCall.toolName === "task") {
         if (shouldSkipToolOutput()) return;
-        chat.addToolOutput({
-          tool: "task",
-          toolCallId: toolCall.toolCallId,
-          state: "output-error",
-          errorText: "Task tool not yet implemented",
+
+        const metadata = chat.messages.findLast(
+          (message) => message.metadata?.mode && message.metadata?.model,
+        )?.metadata;
+
+        await runTaskSubagent({
+          input: toolCall.input,
+          mode,
+          model: metadata?.model,
+          shouldSkipOutput: shouldSkipToolOutput,
+          addOutput: (result) => {
+            if (result.error || result.interrupted) {
+              chat.addToolOutput({
+                tool: "task",
+                toolCallId: toolCall.toolCallId,
+                state: "output-error",
+                errorText: result.summary,
+              });
+              return;
+            }
+            chat.addToolOutput({
+              tool: "task",
+              toolCallId: toolCall.toolCallId,
+              output: { summary: result.summary },
+            });
+          },
         });
         return;
       }
@@ -507,6 +581,7 @@ export function useChat(
   }, [turnInterrupted, chat.messages, chat.setMessages]);
 
   const interrupt = useCallback(() => {
+    subagentAbortRef.current?.abort();
     turnInterruptedRef.current = true;
     setTurnInterrupted(true);
     killTrackedToolProcesses();
@@ -579,11 +654,88 @@ export function useChat(
     chat.setMessages(pruned);
   }, [chat.messages, chat.setMessages]);
 
+  const runSlashSubagent = useCallback(
+    async (params: {
+      type: SubagentType;
+      prompt: string;
+      slashLine: string;
+      mode: ModeType;
+      model: SupportedChatModelId;
+    }) => {
+      const result = await runTaskSubagent({
+        input: {
+          subagent_type: params.type,
+          prompt: params.prompt,
+          description: params.slashLine,
+        },
+        mode: params.mode,
+        model: params.model,
+      });
+
+      const toolCallId = `slash-task-${Date.now()}`;
+      const userMessage: Message = {
+        id: `user-slash-${Date.now()}`,
+        role: "user",
+        parts: [{ type: "text", text: params.slashLine }],
+        metadata: { mode: params.mode, model: params.model },
+      };
+      const assistantMessage: Message = {
+        id: `assistant-slash-${Date.now()}`,
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-task",
+            toolCallId,
+            state: result.error || result.interrupted ? "output-error" : "output-available",
+            input: {
+              subagent_type: params.type,
+              prompt: params.prompt,
+              description: params.slashLine,
+            },
+            ...(result.error || result.interrupted
+              ? { errorText: result.summary }
+              : { output: { summary: result.summary } }),
+          } as Message["parts"][number],
+        ],
+        metadata: { mode: params.mode, model: params.model },
+      };
+
+      chat.setMessages((messages) => [...messages, userMessage, assistantMessage]);
+    },
+    [chat.setMessages, runTaskSubagent],
+  );
+
   const submit = useCallback(
     (params: { userText: string; mode: ModeType; model: SupportedChatModelId }) => {
       turnInterruptedRef.current = false;
       setTurnInterrupted(false);
       skipToolOutputIdsRef.current.clear();
+
+      const trimmed = params.userText.trim();
+      const exploreMatch = /^\/explore(?:\s+(.*))?$/s.exec(trimmed);
+      const planResearchMatch = /^\/plan-research(?:\s+(.*))?$/s.exec(trimmed);
+      const slashMatch = exploreMatch ?? planResearchMatch;
+
+      if (slashMatch) {
+        const prompt = (slashMatch[1] ?? "").trim();
+        if (!prompt) {
+          toast.show({
+            variant: "error",
+            message: "Provide a prompt after the slash command",
+          });
+          return Promise.resolve();
+        }
+
+        const type: SubagentType = exploreMatch ? "explore" : "plan-research";
+        return runSlashSubagent({
+          type,
+          prompt,
+          slashLine: trimmed,
+          mode: params.mode,
+          model: params.model,
+        });
+      }
+
       const skills = resolveLoadedSkills();
       const userText = expandSkillSlashMessage({ text: params.userText, skills });
       return chat.sendMessage({
@@ -594,13 +746,14 @@ export function useChat(
         },
       });
     },
-    [chat.sendMessage],
+    [chat.sendMessage, runSlashSubagent, toast.show],
   );
 
   return {
     messages: chat.messages,
     status: chat.status,
     turnInterrupted,
+    subagentRunning,
     error: chat.error
       ? new Error(formatChatStreamError(chat.error))
       : undefined,
