@@ -165,6 +165,8 @@ mocode
 | `/models` | 选择 AI 模型 |
 | `/sessions` | 浏览并恢复历史会话 |
 | `/resume` | 从最后一条 user 消息 **重新生成**（partial 助手被 Esc 中断后） |
+| `/explore` | 委托 **explore** 只读子代理进行代码库探索 |
+| `/plan-research` | 委托 **plan-research** 只读子代理进行架构调研 |
 | `/theme` | 切换配色主题 |
 | `/login` | 浏览器登录（Clerk OAuth） |
 | `/logout` | 本地登出 |
@@ -194,6 +196,7 @@ macOS Terminal.app 可运行 `mocode --terminal-setup` 一次，启用 Option-as
 | 流式正文中 Esc | partial 助手文本**保留**在 transcript；重开 session 仍可见 |
 | 首个可见 token 前 Esc | **恢复输入框**原文；移除空 assistant 占位；可编辑后重发 |
 | 工具（bash/MCP）执行中 Esc | 工具行显示 **`Interrupted by user`**；**立即停止**生成（kill 本地子进程） |
+| **Task 子代理**执行中 Esc | 中断子代理；Task 摘要显示 **`Interrupted by user`**；footer spinner 停止 |
 | 重开 session，末条为 **user**（无 assistant） | **自动**开始生成（无需 `/resume`） |
 | 重开 session，末条为 **partial assistant** | **不**自动续写；手动输入 **`/resume`** |
 | `/resume`（partial 助手） | 从最后 user 消息 **regenerate** 完整新回复（非 append 续写 partial） |
@@ -235,11 +238,67 @@ macOS Terminal.app 可运行 `mocode --terminal-setup` 一次，启用 Option-as
 | `listDirectory` | ✓ | ✓ | 列出目录内容 |
 | `glob` | ✓ | ✓ | 按 glob 查找文件 |
 | `grep` | ✓ | ✓ | 正则搜索文件内容 |
+| `gitStatus` | ✓ | ✓ | Git 分支与工作区摘要 |
+| `gitDiff` | ✓ | ✓ | Git diff（未暂存、已暂存或对比 ref） |
+| `task` | ✓ | ✓ | 委托内置子代理（`explore`、`plan-research`） |
 | `writeFile` | | ✓ | 创建或覆盖文件 |
 | `editFile` | | ✓ | 精确替换文件中的文本 |
 | `bash` | | ✓ | 执行 Shell 命令 |
 
 所有路径相对于 `process.cwd()` 解析，无法逃逸出项目目录。
+
+---
+
+## 子代理、Skills 与 Hooks
+
+Phase 4  harness 能力（HARNESS-09–11）。均在 **CLI 本地**执行，与 Phase 11 的 server 流式 / CLI 执行架构一致。
+
+### Task 工具与子代理（HARNESS-09）
+
+主代理（或你通过 slash）可调用 **`task`**，指定 `subagent_type` 为 **`explore`** 或 **`plan-research`**，以及 `prompt` 与可选的 transcript `description`。
+
+| 内置类型 | 工具集 | 用途 |
+|---------|--------|------|
+| `explore` | 只读本地 + 只读 MCP | 快速代码库扫描 |
+| `plan-research` | 仅只读本地 | 架构 / 方案对比调研 |
+
+**行为要点：**
+
+- **仅摘要** — 父会话只看到 Task 工具行与最终摘要，不展示子代理内部 tool loop（D-21）。
+- **同步阻塞** — 父代理等待；运行期间 footer 显示 `{subagent_type} · esc to interrupt`（D-04）。
+- **Esc 中断** — 中止子代理并在 Task 输出显示 `Interrupted by user`（D-10）。
+- **禁止嵌套** — v1 中子代理不能再 spawn Task（D-05）。
+
+Slash 快捷命令 **`/explore`**、**`/plan-research`** 与模型发起的 Task 走同一 transcript 路径（如 `/explore src/lib`）。命令后文本作为子代理 prompt。
+
+过长摘要默认显示 **8 行**，可点击展开。
+
+### Skills（HARNESS-10）
+
+兼容 Cursor 的 **`SKILL.md`** 目录：
+
+- `~/.mocode/skills/`（全局）
+- `.mocode/skills/`（项目 — 同名 skill 覆盖全局）
+
+每个有效 skill 在 CLI 启动时注册 **动态 slash** `/skill-name`。`/my-skill fix the bug` 将 skill 正文与后续参数展开为用户消息。**内置 slash 优先**；冲突 skill 跳过并 toast 提示。
+
+Skills 继承当前 **Plan/Build** 模式及既有 write/bash 审批规则。
+
+### Hooks（HARNESS-11）
+
+工具生命周期钩子配置 **`hooks.json`**：
+
+- `~/.mocode/hooks.json`（全局）
+- `.mocode/hooks.json`（项目 — 相同 `id` 覆盖全局）
+
+每条：`id`、`event`（`beforeToolCall` | `afterToolCall`）、`toolName` glob（如 `bash`、`mcp__*`）、`command` shell  argv 数组、可选 `timeoutMs`（默认 30s）。
+
+**执行顺序：** `beforeToolCall` hooks → bash/MCP/write **审批** → 执行 → `afterToolCall` hooks（D-40）。
+
+- **`beforeToolCall`** — 非零退出、超时或 JSON deny **阻止**工具；error toast + transcript `output-error`（D-38）。
+- **`afterToolCall`** — 仅观测；执行后不可阻止（D-39）。
+
+Hook stdin：`{ toolName, input, sessionId, mode, cwd, event }` JSON。
 
 ---
 
