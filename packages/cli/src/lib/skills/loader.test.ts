@@ -44,7 +44,7 @@ describe("loadMergedSkills (D-26)", () => {
       writeSkillMd(projectSkillsRoot, skill.name, skill.description, skill.body);
     }
 
-    return { globalDir, projectDir, projectSkillsRoot };
+    return { globalDir, projectDir, globalSkillsRoot, projectSkillsRoot };
   }
 
   test("merge: global and project skills union by name", () => {
@@ -53,7 +53,7 @@ describe("loadMergedSkills (D-26)", () => {
       [{ name: "project-skill", description: "Project", body: "Project body" }],
     );
 
-    const skills = loadMergedSkills(projectDir, { globalSkillsDir: join(globalDir, "skills") });
+    const { skills } = loadMergedSkills(projectDir, { globalSkillsDir: join(globalDir, "skills") });
     const names = skills.map((skill) => skill.name).sort();
 
     expect(names).toEqual(["global-skill", "project-skill"]);
@@ -65,7 +65,7 @@ describe("loadMergedSkills (D-26)", () => {
       [{ name: "write-tests", description: "Project tests", body: "Project write-tests body" }],
     );
 
-    const skills = loadMergedSkills(projectDir, { globalSkillsDir: join(globalDir, "skills") });
+    const { skills } = loadMergedSkills(projectDir, { globalSkillsDir: join(globalDir, "skills") });
     const skill = skills.find((entry) => entry.name === "write-tests");
 
     expect(skill?.description).toBe("Project tests");
@@ -73,17 +73,35 @@ describe("loadMergedSkills (D-26)", () => {
     expect(skills.filter((entry) => entry.name === "write-tests")).toHaveLength(1);
   });
 
-  test("invalid frontmatter is skipped or throws per schema (implementation choice in 04-02)", () => {
+  test("invalid frontmatter is skipped while valid skills still load", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "mocode-skills-bad-"));
     tempDirs.push(projectDir);
     const skillsRoot = join(projectDir, ".mocode", "skills");
     mkdirSync(join(skillsRoot, "broken"), { recursive: true });
     writeFileSync(join(skillsRoot, "broken", "SKILL.md"), "---\nnot: valid\n---\nBody\n", "utf-8");
+    writeSkillMd(skillsRoot, "good-skill", "Good", "Still works");
 
-    expect(() =>
-      loadMergedSkills(projectDir, {
-        globalSkillsDir: join(projectDir, "missing-global-skills"),
-      }),
-    ).toThrow();
+    const { skills, errors } = loadMergedSkills(projectDir, {
+      globalSkillsDir: join(projectDir, "missing-global-skills"),
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(["good-skill"]);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.join(" ")).toContain("Invalid skill frontmatter");
+  });
+
+  test("honors projectSkillsDir without globalSkillsDir override", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "mocode-skills-project-only-"));
+    tempDirs.push(projectDir);
+    const customProjectRoot = join(projectDir, "custom-skills");
+    mkdirSync(customProjectRoot, { recursive: true });
+    writeSkillMd(customProjectRoot, "custom", "Custom", "from custom dir");
+
+    const { skills } = loadMergedSkills(projectDir, {
+      projectSkillsDir: customProjectRoot,
+      globalSkillsDir: join(projectDir, "no-global"),
+    });
+
+    expect(skills.map((skill) => skill.name)).toEqual(["custom"]);
   });
 });

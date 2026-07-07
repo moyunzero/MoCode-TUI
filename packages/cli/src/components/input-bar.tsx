@@ -18,7 +18,7 @@ import { useTheme } from "../providers/theme";
 import { usePromptConfig } from "../providers/prompt-config";
 import { Mode } from "@mocode/shared";
 import { runCommandAction } from "../lib/run-command-action";
-import { getAllCommands, getCommandColWidth } from "../lib/skills/registry";
+import { getAllCommands, getCommandColWidth, subscribeSkillsCache } from "../lib/skills/registry";
 
 const MAX_VISIBLE_MENTIONS = 8;
 const CURRENT_DIRECTORY = process.cwd();
@@ -297,11 +297,18 @@ export function InputBar({
   const [activeMention, setActiveMention] = useState<MentionMatch | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<MentionCandidate[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [skillsCacheRevision, setSkillsCacheRevision] = useState(0);
 
-  const commands = useMemo(
-    () => getAllCommands(process.cwd(), { submit: onSubmit }),
-    [onSubmit],
-  );
+  useEffect(() => {
+    return subscribeSkillsCache(() => {
+      setSkillsCacheRevision((revision) => revision + 1);
+    });
+  }, []);
+
+  const commands = useMemo(() => {
+    void skillsCacheRevision;
+    return getAllCommands(process.cwd(), { submit: onSubmit });
+  }, [onSubmit, skillsCacheRevision]);
   const commandColWidth = useMemo(() => getCommandColWidth(commands), [commands]);
 
   const {

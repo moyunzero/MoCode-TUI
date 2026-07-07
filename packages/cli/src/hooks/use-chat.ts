@@ -179,7 +179,7 @@ function resolveLoadedSkills() {
   if (cached.length > 0) {
     return cached;
   }
-  return loadMergedSkills(process.cwd());
+  return loadMergedSkills(process.cwd()).skills;
 }
 
 export function useChat(

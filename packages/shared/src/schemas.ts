@@ -25,6 +25,18 @@ export type ModeType = (typeof Mode)[keyof typeof Mode];
 export const toolInputSchemas = {
   readFile: z.object({
     path: z.string().describe("Relative path to the file to read"),
+    line_start: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Optional 1-based start line (inclusive) for partial reads"),
+    line_end: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Optional 1-based end line (inclusive) for partial reads"),
   }),
   listDirectory: z.object({
     path: z.string().default(".").describe("Relative directory path to list"),
@@ -81,7 +93,8 @@ export const toolInputSchemas = {
 /** Read-only tools available in PLAN mode (and as a subset of BUILD). */
 export const readOnlyToolContracts = {
   readFile: tool({
-    description: "Read a file from the current project directory.",
+    description:
+      "Read a file from the current project directory. Use line_start/line_end for partial reads (1-based, inclusive).",
     inputSchema: toolInputSchemas.readFile,
   }),
   listDirectory: tool({

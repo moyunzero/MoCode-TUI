@@ -30,7 +30,7 @@ function resolveCredits(params: ResolveSubagentChatFinishParams): number {
     return 0;
   }
   if (!params.model) {
-    return 1;
+    throw new Error("resolveSubagentChatFinish: model is required when completedUsage is present");
   }
   const resolvedModel = resolveChatModel(params.model);
   return calculateCreditsForUsage({

@@ -10,7 +10,7 @@ import {
   type UIMessage,
 } from "ai";
 import {
-  SUPPORTED_CHAT_MODELS,
+  DEFAULT_CHAT_MODEL_ID,
   toolInputSchemas,
   type ModeType,
   type SerializedMcpTool,
@@ -67,6 +67,29 @@ type ToolExecuteContext = {
   hooksConfig: ReturnType<typeof loadMergedHooksConfig>;
 };
 
+function createSubagentSessionState(cwd: string): Pick<
+  ToolExecuteContext,
+  "sessionAllowRef" | "sessionMcpAllowRef" | "sessionWriteAllowRef" | "hooksConfig"
+> {
+  const sessionAllowRef = new Set<string>();
+  const sessionMcpAllowRef = new Set<string>();
+  const sessionWriteAllowRef = new Set<string>();
+
+  let hooksConfig: ReturnType<typeof loadMergedHooksConfig>;
+  try {
+    hooksConfig = loadMergedHooksConfig(cwd);
+  } catch {
+    hooksConfig = { hooks: [] };
+  }
+
+  return {
+    sessionAllowRef,
+    sessionMcpAllowRef,
+    sessionWriteAllowRef,
+    hooksConfig,
+  };
+}
+
 function resolveSubagentModel(
   modelId?: string,
 ):
@@ -79,7 +102,7 @@ function resolveSubagentModel(
       ok: false;
       error: string;
     } {
-  const id = (modelId ?? SUPPORTED_CHAT_MODELS[0]?.id) as string;
+  const id = modelId ?? DEFAULT_CHAT_MODEL_ID;
   try {
     const resolved = resolveChatModel(id);
     return {
@@ -460,25 +483,13 @@ async function runSubagentByok(
   const mcpTools = loadMcpToolsForSubagent(params.subagent_type, params.mode, deps);
   const baseTools = buildSubagentToolSet(params.subagent_type, { mcpTools });
 
-  const sessionAllowRef = new Set<string>();
-  const sessionMcpAllowRef = new Set<string>();
-  const sessionWriteAllowRef = new Set<string>();
-
-  let hooksConfig: ReturnType<typeof loadMergedHooksConfig>;
-  try {
-    hooksConfig = loadMergedHooksConfig(cwd);
-  } catch {
-    hooksConfig = { hooks: [] };
-  }
+  const sessionState = createSubagentSessionState(cwd);
 
   const tools = wrapToolsWithExecute(baseTools, {
     mode: params.mode,
     sessionId: params.sessionId,
-    sessionAllowRef,
-    sessionMcpAllowRef,
-    sessionWriteAllowRef,
+    ...sessionState,
     deps,
-    hooksConfig,
   });
 
   const system = buildSubagentSystemPrompt({
@@ -543,28 +554,16 @@ async function runSubagentSaaS(
   const gitSummary = await getGitSummary(cwd);
   const mcpTools = loadMcpToolsForSubagent(params.subagent_type, params.mode, deps);
 
-  const sessionAllowRef = new Set<string>();
-  const sessionMcpAllowRef = new Set<string>();
-  const sessionWriteAllowRef = new Set<string>();
-
-  let hooksConfig: ReturnType<typeof loadMergedHooksConfig>;
-  try {
-    hooksConfig = loadMergedHooksConfig(cwd);
-  } catch {
-    hooksConfig = { hooks: [] };
-  }
+  const sessionState = createSubagentSessionState(cwd);
 
   const toolContext: ToolExecuteContext = {
     mode: params.mode,
     sessionId: params.sessionId,
-    sessionAllowRef,
-    sessionMcpAllowRef,
-    sessionWriteAllowRef,
     deps,
-    hooksConfig,
+    ...sessionState,
   };
 
-  const modelId = params.model ?? SUPPORTED_CHAT_MODELS[0]?.id ?? "gpt-4.1";
+  const modelId = params.model ?? DEFAULT_CHAT_MODEL_ID;
   const subagentSystem = buildSubagentSystemPrompt({
     type: params.subagent_type,
     cwd,

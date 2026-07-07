@@ -18,7 +18,21 @@ describe("chat subagent ephemeral persist (D-09)", () => {
           parts: [{ type: "tool-task", state: "output-available", output: { summary: "done" } }],
         },
       ],
-      completedUsage: { totalTokens: 128 },
+      completedUsage: {
+        totalTokens: 128,
+        inputTokens: 100,
+        outputTokens: 28,
+        inputTokenDetails: {
+          noCacheTokens: 100,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        outputTokenDetails: {
+          textTokens: 28,
+          reasoningTokens: 0,
+        },
+      },
+      model: "gemini-2.5-flash-lite",
       db: { session: { update: sessionUpdate } },
       ingestAiUsage: ingestUsage,
     });
@@ -42,5 +56,37 @@ describe("chat subagent ephemeral persist (D-09)", () => {
     });
 
     expect(sessionUpdate).toHaveBeenCalled();
+  });
+
+  test("throws when completedUsage is present without model", async () => {
+    const sessionUpdate = mock(async () => ({}));
+    const ingestUsage = mock(async () => undefined);
+
+    await expect(
+      resolveSubagentChatFinish({
+        persist: false,
+        sessionId: "session-1",
+        userId: "user-1",
+        messages: [],
+        completedUsage: {
+        totalTokens: 128,
+        inputTokens: 100,
+        outputTokens: 28,
+        inputTokenDetails: {
+          noCacheTokens: 100,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        outputTokenDetails: {
+          textTokens: 28,
+          reasoningTokens: 0,
+        },
+      },
+        db: { session: { update: sessionUpdate } },
+        ingestAiUsage: ingestUsage,
+      }),
+    ).rejects.toThrow(/model is required/);
+
+    expect(ingestUsage).not.toHaveBeenCalled();
   });
 });

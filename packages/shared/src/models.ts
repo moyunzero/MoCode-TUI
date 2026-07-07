@@ -148,4 +148,56 @@ export type ModelPricing = {
   );
   
   /** Default model when the session UI does not expose an explicit picker yet. */
-  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gemini-2.5-flash-lite";
+  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gpt-oss-120b";
+
+  /** BYOK catalog hints for the `/models` picker (free-tier tool-calling guidance). */
+  export type ModelCatalogHint = "free-recommended" | "free-ok" | "weak-tools";
+
+  const MODEL_CATALOG_HINTS: Partial<Record<SupportedChatModelId, ModelCatalogHint>> = {
+    "gpt-oss-120b": "free-recommended",
+    "openai/gpt-oss-120b": "free-ok",
+    "gemini-2.5-flash": "free-ok",
+    "llama-3.3-70b-versatile": "weak-tools",
+    "llama-3.1-8b-instant": "weak-tools",
+    "gemini-2.5-flash-lite": "weak-tools",
+    "openai/gpt-oss-120b:free": "weak-tools",
+  };
+
+  const MODEL_CATALOG_HINT_SORT: Record<ModelCatalogHint, number> = {
+    "free-recommended": 0,
+    "free-ok": 1,
+    "weak-tools": 3,
+  };
+
+  /** Returns catalog hint for a model id, if any. */
+  export function getModelCatalogHint(modelId: SupportedChatModelId): ModelCatalogHint | undefined {
+    return MODEL_CATALOG_HINTS[modelId];
+  }
+
+  /** User-facing label for a catalog hint. */
+  export function formatModelCatalogHint(hint: ModelCatalogHint): string {
+    switch (hint) {
+      case "free-recommended":
+        return "免费推荐";
+      case "free-ok":
+        return "免费可用";
+      case "weak-tools":
+        return "工具调用不稳定";
+    }
+  }
+
+  /** Sorts model ids for the picker: recommended free models first, weak tools last. */
+  export function sortModelsForCatalogPicker(
+    modelIds: readonly SupportedChatModelId[],
+  ): SupportedChatModelId[] {
+    return [...modelIds].sort((left, right) => {
+      const leftHint = getModelCatalogHint(left);
+      const rightHint = getModelCatalogHint(right);
+      const leftOrder = leftHint ? MODEL_CATALOG_HINT_SORT[leftHint] : 2;
+      const rightOrder = rightHint ? MODEL_CATALOG_HINT_SORT[rightHint] : 2;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+      return left.localeCompare(right);
+    });
+  }

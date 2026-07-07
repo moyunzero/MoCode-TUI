@@ -60,12 +60,17 @@ export function buildSubagentToolSet(
 ): ToolSet {
   const mcpTools = options.mcpTools ?? [];
 
-  if (type === "plan-research") {
-    return pickLocalTools(PLAN_RESEARCH_LOCAL_TOOLS);
+  switch (type) {
+    case "plan-research":
+      return pickLocalTools(PLAN_RESEARCH_LOCAL_TOOLS);
+    case "explore":
+      return {
+        ...omitTask(getToolContracts(Mode.PLAN) as ToolSet),
+        ...filterReadOnlyMcpTools(mcpTools),
+      };
+    default: {
+      const exhaustive: never = type;
+      return exhaustive;
+    }
   }
-
-  return {
-    ...omitTask(getToolContracts(Mode.PLAN) as ToolSet),
-    ...filterReadOnlyMcpTools(mcpTools),
-  };
 }

@@ -170,6 +170,7 @@ See [`.env.example`](./.env.example) for the full list and inline comments.
 | `/new` | Start a new conversation |
 | `/agents` | Switch between **Build** and **Plan** modes |
 | `/models` | Select an AI model |
+| `/keys` | Configure BYOK provider API keys (`mocode --local`) |
 | `/sessions` | Browse and resume past sessions |
 | `/resume` | **Regenerate** from the last user message (after Esc on a partial assistant) |
 | `/explore` | Delegate codebase exploration to a read-only **explore** subagent |
@@ -227,14 +228,22 @@ Implementation details: [`doc/harness-phase-03-stream-reliability-notes.md`](./d
 | `gpt-5.4-mini` | OpenAI |
 | `gpt-5.4-nano` | OpenAI |
 | `gemini-2.5-flash` | Google |
-| `gemini-2.5-flash-lite` | Google (default; wider free quota) |
-| `llama-3.3-70b-versatile` | Groq |
-| `llama-3.1-8b-instant` | Groq |
-| `openai/gpt-oss-120b` | Groq |
-| `gpt-oss-120b` | Cerebras |
+| `gemini-2.5-flash-lite` | Google (free; tight quota; weak tool calling) |
+| `llama-3.3-70b-versatile` | Groq (free; weak tool calling) |
+| `llama-3.1-8b-instant` | Groq (free; weak tool calling) |
+| `openai/gpt-oss-120b` | Groq (free) |
+| `gpt-oss-120b` | Cerebras (default for BYOK; free recommended) |
 | `openai/gpt-oss-120b:free` | OpenRouter |
 
 The canonical list lives in `packages/shared/src/models.ts`.
+
+### BYOK (`mocode --local`)
+
+- **Default model:** `gpt-oss-120b` (Cerebras). Set provider keys with **`/keys`** → `~/.mocode/keys.json` (local only; never sent to the MoCode server).
+- **`/models` hints:** *Free recommended* / *Free OK* / *Weak tool calling* — avoid weak-tool models for `/explore` and other multi-tool turns.
+- **Free-tier picks:** Cerebras `gpt-oss-120b` or Groq `openai/gpt-oss-120b`. Groq Llama ids often malform tool calls in subagent loops.
+
+Smoke-test server `.env` keys: `bun run packages/server/scripts/test-providers.ts`
 
 ---
 
@@ -261,7 +270,7 @@ All paths are resolved relative to `process.cwd()` and cannot escape the project
 
 ## Subagents, skills & hooks
 
-Phase 4 harness capabilities (HARNESS-09–11). All run **locally on the CLI** — same server-streams / CLI-executes split as other tools.
+Phase 4 harness capabilities (HARNESS-09–11). CLI-side tool execution runs locally; the Task subagent may still stream through SaaS when applicable.
 
 ### Task tool & subagents (HARNESS-09)
 
@@ -290,7 +299,7 @@ Cursor-compatible **`SKILL.md`** directories under:
 - `~/.mocode/skills/` (global)
 - `.mocode/skills/` (project — overrides same skill name)
 
-Each valid skill registers a **dynamic slash command** `/skill-name` at CLI startup. Invoking `/my-skill fix the bug` expands the skill body plus trailing args as the user message. **Built-in slash commands win** on name collision; conflicting skills are skipped with a startup toast.
+Each valid skill registers a **dynamic slash command** `/skill-name` at app startup (before the session opens). Invoking `/my-skill fix the bug` expands the skill body plus trailing args as the user message. **Built-in slash commands win** on name collision; conflicting skills are skipped with a startup toast.
 
 Skills inherit the current **Plan/Build** mode and existing write/bash approval gates.
 

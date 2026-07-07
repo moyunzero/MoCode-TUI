@@ -99,3 +99,13 @@ describe("task tool contract (D-01, HARNESS-09)", () => {
     }).success).toBe(false);
   });
 });
+
+describe("readFile tool schema", () => {
+  test("accepts path-only and optional line range", () => {
+    const schema = toolInputSchemas.readFile;
+    expect(schema.safeParse({ path: "src/index.ts" }).success).toBe(true);
+    expect(
+      schema.safeParse({ path: "src/index.ts", line_start: 1, line_end: 40 }).success,
+    ).toBe(true);
+  });
+});

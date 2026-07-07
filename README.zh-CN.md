@@ -170,6 +170,7 @@ mocode
 | `/new` | 开始新对话 |
 | `/agents` | 切换 **Build** / **Plan** 模式 |
 | `/models` | 选择 AI 模型 |
+| `/keys` | 配置 BYOK 提供商 API Key（`mocode --local`） |
 | `/sessions` | 浏览并恢复历史会话 |
 | `/resume` | 从最后一条 user 消息 **重新生成**（partial 助手被 Esc 中断后） |
 | `/explore` | 委托 **explore** 只读子代理进行代码库探索 |
@@ -227,14 +228,22 @@ macOS Terminal.app 可运行 `mocode --terminal-setup` 一次，启用 Option-as
 | `gpt-5.4-mini` | OpenAI |
 | `gpt-5.4-nano` | OpenAI |
 | `gemini-2.5-flash` | Google |
-| `gemini-2.5-flash-lite` | Google（默认，免费配额更宽） |
-| `llama-3.3-70b-versatile` | Groq |
-| `llama-3.1-8b-instant` | Groq |
-| `openai/gpt-oss-120b` | Groq |
-| `gpt-oss-120b` | Cerebras |
+| `gemini-2.5-flash-lite` | Google（免费；配额紧；工具调用不稳定） |
+| `llama-3.3-70b-versatile` | Groq（免费；工具调用不稳定） |
+| `llama-3.1-8b-instant` | Groq（免费；工具调用不稳定） |
+| `openai/gpt-oss-120b` | Groq（免费） |
+| `gpt-oss-120b` | Cerebras（BYOK 默认；免费推荐） |
 | `openai/gpt-oss-120b:free` | OpenRouter |
 
 权威列表见 `packages/shared/src/models.ts`。
+
+### BYOK（`mocode --local`）
+
+- **默认模型：** `gpt-oss-120b`（Cerebras）。用 **`/keys`** 写入 `~/.mocode/keys.json`（仅存本机，不上传服务端）。
+- **`/models` 标注：** *免费推荐* / *免费可用* / *工具调用不稳定* — `/explore` 等多工具场景请避开不稳定项。
+- **免费档推荐：** Cerebras `gpt-oss-120b` 或 Groq `openai/gpt-oss-120b`。Groq Llama 系列在子代理多步 tool loop 中易格式错误。
+
+冒烟测试服务端 `.env` Key：`bun run packages/server/scripts/test-providers.ts`
 
 ---
 
@@ -261,7 +270,7 @@ macOS Terminal.app 可运行 `mocode --terminal-setup` 一次，启用 Option-as
 
 ## 子代理、Skills 与 Hooks
 
-Phase 4  harness 能力（HARNESS-09–11）。均在 **CLI 本地**执行，与 Phase 11 的 server 流式 / CLI 执行架构一致。
+Phase 4 harness 能力（HARNESS-09–11）。CLI 侧的工具执行在本地完成；Task 子代理在适用时仍可能通过 SaaS 流式处理。
 
 ### Task 工具与子代理（HARNESS-09）
 
@@ -290,7 +299,7 @@ Slash 快捷命令 **`/explore`**、**`/plan-research`** 与模型发起的 Task
 - `~/.mocode/skills/`（全局）
 - `.mocode/skills/`（项目 — 同名 skill 覆盖全局）
 
-每个有效 skill 在 CLI 启动时注册 **动态 slash** `/skill-name`。`/my-skill fix the bug` 将 skill 正文与后续参数展开为用户消息。**内置 slash 优先**；冲突 skill 跳过并 toast 提示。
+每个有效 skill 在应用启动时（进入会话前）注册 **动态 slash** `/skill-name`。`/my-skill fix the bug` 将 skill 正文与后续参数展开为用户消息。**内置 slash 优先**；冲突 skill 跳过并 toast 提示。
 
 Skills 继承当前 **Plan/Build** 模式及既有 write/bash 审批规则。
 

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import matter from "gray-matter";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type Skill, skillFrontmatterSchema } from "./schema";
 
 const CONFIG_DIR = ".mocode";
@@ -18,11 +18,24 @@ export type LoadMergedSkillsOptions = {
   projectSkillsDir?: string;
 };
 
+export type LoadMergedSkillsResult = {
+  skills: Skill[];
+  errors: string[];
+};
+
 /** Returns filesystem paths for global and project skill directories. */
 export function getSkillsPaths(cwd: string): SkillsPaths {
   return {
     global: join(homedir(), CONFIG_DIR, SKILLS_DIR),
     project: join(cwd, CONFIG_DIR, SKILLS_DIR),
+  };
+}
+
+function resolveSkillsPaths(cwd: string, options?: LoadMergedSkillsOptions): SkillsPaths {
+  const defaults = getSkillsPaths(cwd);
+  return {
+    global: options?.globalSkillsDir ?? defaults.global,
+    project: options?.projectSkillsDir ?? defaults.project,
   };
 }
 
@@ -42,7 +55,7 @@ function loadSkillFromDirectory(skillDir: string): Skill {
     throw new Error(`Missing ${SKILL_FILE} in ${skillDir}`);
   }
 
-  const directoryName = skillDir.split("/").pop() ?? skillDir;
+  const directoryName = basename(skillDir);
   const raw = readFileSync(skillPath, "utf-8");
   const parsed = matter(raw);
   const frontmatter = skillFrontmatterSchema.safeParse(parsed.data);
@@ -86,25 +99,17 @@ function loadSkillsFromRoot(root: string): { skills: Skill[]; errors: string[] }
 /**
  * Loads and merges skills from global ~/.mocode/skills/ and project .mocode/skills/.
  * Project entries override global entries with the same name (D-26).
+ * Invalid skill directories are skipped; their errors are returned alongside valid skills.
  */
 export function loadMergedSkills(
   cwd: string,
   options?: LoadMergedSkillsOptions,
-): Skill[] {
-  const paths =
-    options?.globalSkillsDir && options?.projectSkillsDir
-      ? { global: options.globalSkillsDir, project: options.projectSkillsDir }
-      : options?.globalSkillsDir
-        ? { global: options.globalSkillsDir, project: getSkillsPaths(cwd).project }
-        : getSkillsPaths(cwd);
+): LoadMergedSkillsResult {
+  const paths = resolveSkillsPaths(cwd, options);
 
   const globalResult = loadSkillsFromRoot(paths.global);
   const projectResult = loadSkillsFromRoot(paths.project);
   const loadErrors = [...globalResult.errors, ...projectResult.errors];
-
-  if (loadErrors.length > 0) {
-    throw new Error(loadErrors.join("; "));
-  }
 
   const merged = new Map<string, Skill>();
 
@@ -115,5 +120,8 @@ export function loadMergedSkills(
     merged.set(skill.name, skill);
   }
 
-  return [...merged.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    skills: [...merged.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    errors: loadErrors,
+  };
 }

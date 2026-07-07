@@ -24,7 +24,7 @@ describe("initSkillsOnSessionMount", () => {
     tempDirs.length = 0;
   });
 
-  test("returns loadError and empty skills when loader throws", () => {
+  test("returns loadError when skills have validation errors", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "mocode-skills-registry-bad-"));
     tempDirs.push(projectDir);
     const projectSkillsRoot = join(projectDir, ".mocode", "skills");
@@ -40,6 +40,25 @@ describe("initSkillsOnSessionMount", () => {
     });
     expect(result.skills).toEqual([]);
     expect(result.collisions).toEqual([]);
+    expect(result.loadError).toContain("Invalid skill frontmatter");
+  });
+
+  test("returns loadError but keeps valid skills when one skill is broken", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "mocode-skills-registry-mixed-"));
+    tempDirs.push(projectDir);
+    const projectSkillsRoot = join(projectDir, ".mocode", "skills");
+    mkdirSync(join(projectSkillsRoot, "broken"), { recursive: true });
+    writeFileSync(
+      join(projectSkillsRoot, "broken", "SKILL.md"),
+      "---\nnot: valid\n---\nBody\n",
+      "utf-8",
+    );
+    writeSkillMd(projectSkillsRoot, "ok-skill", "OK", "works");
+
+    const result = initSkillsOnSessionMount(projectDir, {
+      globalSkillsDir: join(projectDir, "missing-global-skills"),
+    });
+    expect(result.skills.map((skill) => skill.name)).toEqual(["ok-skill"]);
     expect(result.loadError).toContain("Invalid skill frontmatter");
   });
 

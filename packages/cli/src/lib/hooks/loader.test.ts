@@ -109,4 +109,32 @@ describe("loadMergedHooksConfig (D-33)", () => {
       }),
     ).toThrow(/hooks/i);
   });
+
+  test("duplicate hook id within one hooks.json throws", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "mocode-hooks-dup-"));
+    tempDirs.push(projectDir);
+    const projectPath = writeHooksJson(projectDir, {
+      hooks: [
+        {
+          id: "lint-bash",
+          event: "beforeToolCall",
+          toolName: "bash",
+          command: ["echo", "one"],
+        },
+        {
+          id: "lint-bash",
+          event: "beforeToolCall",
+          toolName: "bash",
+          command: ["echo", "two"],
+        },
+      ],
+    });
+
+    expect(() =>
+      loadMergedHooksConfig(projectDir, {
+        globalPath: join(projectDir, "missing-global.json"),
+        projectPath,
+      }),
+    ).toThrow(/Duplicate hook id/);
+  });
 });

@@ -13,9 +13,22 @@ export const hookEntrySchema = z.object({
   timeoutMs: z.number().positive().default(30000),
 });
 
-export const hooksConfigSchema = z.object({
-  hooks: z.array(hookEntrySchema).default([]),
-});
+export const hooksConfigSchema = z
+  .object({
+    hooks: z.array(hookEntrySchema).default([]),
+  })
+  .superRefine((config, ctx) => {
+    const seen = new Set<string>();
+    for (const hook of config.hooks) {
+      if (seen.has(hook.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate hook id "${hook.id}" within a single hooks.json`,
+        });
+      }
+      seen.add(hook.id);
+    }
+  });
 
 export type HookEvent = z.infer<typeof hookEventSchema>;
 export type HookEntry = z.infer<typeof hookEntrySchema>;
