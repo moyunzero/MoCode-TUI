@@ -39,7 +39,7 @@ describe("getToolContracts", () => {
   test("PLAN exposes read-only tools only", () => {
     const tools = getToolContracts(Mode.PLAN);
     expect(Object.keys(tools).sort()).toEqual(
-      ["glob", "grep", "gitDiff", "gitStatus", "listDirectory", "readFile"].sort(),
+      ["glob", "grep", "gitDiff", "gitStatus", "listDirectory", "readFile", "task"].sort(),
     );
   });
 
@@ -55,6 +55,7 @@ describe("getToolContracts", () => {
         "gitStatus",
         "listDirectory",
         "readFile",
+        "task",
         "writeFile",
       ].sort(),
     );

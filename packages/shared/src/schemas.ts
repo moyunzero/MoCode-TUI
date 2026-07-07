@@ -65,6 +65,17 @@ export const toolInputSchemas = {
         "Branch or commit SHA to compare working tree against (ignored when staged is true)",
       ),
   }),
+  // Phase 04 (D-01): delegate to a specialized subagent; summary-only result returned to parent.
+  task: z.object({
+    subagent_type: z
+      .enum(["explore", "plan-research"])
+      .describe("Builtin subagent to run"),
+    prompt: z.string().describe("Task instructions for the subagent"),
+    description: z
+      .string()
+      .optional()
+      .describe("Short human-readable label shown in the transcript"),
+  }),
 } as const;
 
 /** Read-only tools available in PLAN mode (and as a subset of BUILD). */
@@ -95,6 +106,11 @@ export const readOnlyToolContracts = {
     description:
       "Get git diff. Default: unstaged changes. Use staged or ref to narrow scope.",
     inputSchema: toolInputSchemas.gitDiff,
+  }),
+  task: tool({
+    description:
+      "Delegate work to a specialized subagent (explore or plan-research). Returns a summary only.",
+    inputSchema: toolInputSchemas.task,
   }),
 } as const;
 
