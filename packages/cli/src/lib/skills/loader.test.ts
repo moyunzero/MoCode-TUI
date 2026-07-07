@@ -77,7 +77,7 @@ describe("loadMergedSkills (D-26)", () => {
     const projectDir = mkdtempSync(join(tmpdir(), "mocode-skills-bad-"));
     tempDirs.push(projectDir);
     const skillsRoot = join(projectDir, ".mocode", "skills");
-    mkdirSync(skillsRoot, { recursive: true });
+    mkdirSync(join(skillsRoot, "broken"), { recursive: true });
     writeFileSync(join(skillsRoot, "broken", "SKILL.md"), "---\nnot: valid\n---\nBody\n", "utf-8");
 
     expect(() =>
