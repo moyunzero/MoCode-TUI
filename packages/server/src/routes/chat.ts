@@ -40,7 +40,6 @@ import {
   type UIMessage,
 } from "ai";
 import { db } from "@mocode/database/client";
-import type { Prisma } from "@mocode/database";
 import { 
   getToolContracts, 
   modeSchema,
@@ -57,14 +56,13 @@ import {
   registerStreamBuffer,
 } from "../lib/active-stream-registry";
 import { StreamReplayBuffer } from "../lib/stream-buffer";
-import { calculateCreditsForUsage } from "../lib/credits";
-import { ingestAiUsage } from "../lib/polar";
 import { isSupportedChatModel, resolveChatModel } from "../lib/model";
 import {
   normalizeInterruptedMessages,
   stripIncompleteAssistantMessages,
 } from "../lib/stream-interrupt";
 import { shouldPersistOnFinish } from "../lib/chat-abort";
+import { resolveSubagentChatFinish } from "../lib/chat-subagent";
 
 type ChatMessageMetadata = {
   mode?: ModeType;
@@ -94,6 +92,8 @@ const submitSchema = z.object({
   mode: modeSchema,
   model: z.string().refine(isSupportedChatModel, "Unsupported model"),
   mcpTools: z.array(mcpToolSchema).optional(),
+  /** When false, inner subagent stream skips session message merge/persist (D-17). */
+  persist: z.boolean().optional().default(true),
 });
 
 const submitValidator = zValidator("json", submitSchema, (result, c) => {
@@ -125,7 +125,7 @@ const app = new Hono<AuthenticatedEnv>()
     submitValidator,
     async (c) => {
       const userId = c.get("userId");
-      const { id, messages, mode, model, mcpTools } = c.req.valid("json");
+      const { id, messages, mode, model, mcpTools, persist = true } = c.req.valid("json");
 
       try {
       const session = await db.session.findUnique({
@@ -143,25 +143,37 @@ const app = new Hono<AuthenticatedEnv>()
         ...deserializeMcpToolsToDynamic(mcpTools),
       };
       const resolvedModel = resolveChatModel(model);
-      const previousMessages = Array.isArray(session.messages)
-        ? (session.messages as unknown as MocodeUIMessage[])
-        : [];
-      const mergedMessages = [...previousMessages];
-      
-      for (const message of messages) {
-        const incomingMessage = {
-          ...message,
-          metadata: { ...message.metadata, mode, model },
-        } satisfies MocodeUIMessage;
+      const mergedMessages: MocodeUIMessage[] = persist
+        ? (() => {
+            const previousMessages = Array.isArray(session.messages)
+              ? (session.messages as unknown as MocodeUIMessage[])
+              : [];
+            const next = [...previousMessages];
 
-        const existingMessageIndex = mergedMessages.findIndex((m) => m.id === incomingMessage.id);
+            for (const message of messages) {
+              const incomingMessage = {
+                ...message,
+                metadata: { ...message.metadata, mode, model },
+              } satisfies MocodeUIMessage;
 
-        if (existingMessageIndex === -1) {
-          mergedMessages.push(incomingMessage);
-        } else {
-          mergedMessages[existingMessageIndex] = incomingMessage;
-        }
-      }
+              const existingMessageIndex = next.findIndex((m) => m.id === incomingMessage.id);
+
+              if (existingMessageIndex === -1) {
+                next.push(incomingMessage);
+              } else {
+                next[existingMessageIndex] = incomingMessage;
+              }
+            }
+
+            return next;
+          })()
+        : messages.map(
+            (message) =>
+              ({
+                ...message,
+                metadata: { ...message.metadata, mode, model },
+              }) satisfies MocodeUIMessage,
+          );
 
       const nextMessages = await validateUIMessages<MocodeUIMessage>({
         messages: stripIncompleteAssistantMessages(mergedMessages),
@@ -211,49 +223,43 @@ const app = new Hono<AuthenticatedEnv>()
             messagesToPersist = normalizeInterruptedMessages(event.messages);
           }
 
-          if (
-            !shouldPersistOnFinish({
-              isAborted: event.isAborted,
-              messagesToPersist,
-              responseMessage: event.responseMessage,
-              hasPendingToolCalls: (message) =>
-                hasPendingToolCalls(message as MocodeUIMessage),
-            })
-          ) {
-            return;
-          }
+          if (persist) {
+            if (
+              !shouldPersistOnFinish({
+                isAborted: event.isAborted,
+                messagesToPersist,
+                responseMessage: event.responseMessage,
+                hasPendingToolCalls: (message) =>
+                  hasPendingToolCalls(message as MocodeUIMessage),
+              })
+            ) {
+              return;
+            }
 
-          await db.session.update({
-            where: { id, userId },
-            data: {
-              messages: messagesToPersist as unknown as Prisma.InputJsonValue,
-            },
-          });
+            await resolveSubagentChatFinish({
+              persist: true,
+              sessionId: id,
+              userId,
+              messages: messagesToPersist,
+              responseMessageId: event.responseMessage.id,
+              completedUsage,
+              model,
+              db,
+            });
+          } else {
+            await resolveSubagentChatFinish({
+              persist: false,
+              sessionId: id,
+              userId,
+              messages: messagesToPersist,
+              responseMessageId: event.responseMessage.id,
+              completedUsage,
+              model,
+              db,
+            });
+          }
 
           clearActiveStream(id, replayBuffer);
-
-          if (!completedUsage) return;
-
-          try {
-            const billableUsage = calculateCreditsForUsage({
-              provider: resolvedModel.provider,
-              model: resolvedModel.modelId,
-              usage: completedUsage,
-            });
-
-            await ingestAiUsage({
-              externalCustomerId: userId,
-              eventId: `chat-message:${event.responseMessage.id}`,
-              credits: billableUsage.credits,
-            });
-          } catch (error) {
-            console.error("Failed to ingest Polar AI usage for chat message", {
-              message: errorLogMessage(error),
-              sessionId: id,
-              messageId: event.responseMessage.id,
-              userId,
-            });
-          }
           } catch (error) {
             clearActiveStream(id, replayBuffer);
             console.error("Failed to persist chat finish", {
