@@ -89,6 +89,13 @@ const GOOGLE_PROVIDER_OPTIONS: Partial<Record<GoogleModelId, ProviderOptions>> =
             },
         },
     },
+    "gemini-2.5-flash-lite": {
+        google: {
+            thinkingConfig: {
+                includeThoughts: true,
+            },
+        },
+    },
 };
 
 const CEREBRAS_PROVIDER_OPTIONS: Partial<Record<CerebrasModelId, ProviderOptions>> = {

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Mode } from "@mocode/shared";
-import { formatAssistantFooter, shouldShowDurationInFooter } from "./bot-message-footer";
+import {
+  formatAssistantFooter,
+  shouldShowAssistantMessageFooter,
+  shouldShowDurationInFooter,
+  shouldShowGeneratingInFooter,
+} from "./bot-message-footer";
 
 describe("shouldShowDurationInFooter (D-09, D-21)", () => {
   test("hides duration while streaming", () => {
@@ -56,5 +61,29 @@ describe("formatAssistantFooter (D-09, D-21)", () => {
     });
     expect(footer).not.toContain("↑100");
     expect(footer).not.toContain("↓50");
+  });
+});
+
+describe("shouldShowAssistantMessageFooter", () => {
+  test("hides footer for tool-task-only assistant messages", () => {
+    expect(shouldShowAssistantMessageFooter([{ type: "tool-task" }])).toBe(false);
+  });
+
+  test("shows footer when assistant has text", () => {
+    expect(
+      shouldShowAssistantMessageFooter([{ type: "tool-task" }, { type: "text" }]),
+    ).toBe(true);
+  });
+});
+
+describe("shouldShowGeneratingInFooter", () => {
+  test("suppresses generating label when tools are pending", () => {
+    expect(
+      shouldShowGeneratingInFooter({
+        streaming: true,
+        hasTextPart: false,
+        toolsPending: true,
+      }),
+    ).toBe(false);
   });
 });

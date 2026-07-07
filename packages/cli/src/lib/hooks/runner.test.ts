@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runBeforeHook } from "./runner";
+import { runBeforeHook, runMatchingHooks } from "./runner";
 
 function writeExecutableScript(dir: string, name: string, body: string): string {
   const path = join(dir, name);
@@ -66,6 +66,7 @@ describe("runBeforeHook (D-36, D-38)", () => {
     });
 
     expect(result.allowed).toBe(false);
+    expect(result.timedOut).toBe(true);
     expect(result.reason?.toLowerCase()).toMatch(/timeout|timed out/i);
   });
 
@@ -86,5 +87,26 @@ describe("runBeforeHook (D-36, D-38)", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain("denied by policy");
+  });
+});
+
+describe("runMatchingHooks hook metadata", () => {
+  test("returns hookId when beforeToolCall blocks", async () => {
+    const result = await runMatchingHooks(
+      "beforeToolCall",
+      "bash",
+      { toolName: "bash", input: {}, event: "beforeToolCall" },
+      [
+        {
+          id: "block-bash",
+          event: "beforeToolCall",
+          toolName: "bash",
+          command: ["/bin/sh", "-c", "exit 1"],
+        },
+      ],
+    );
+
+    expect(result?.allowed).toBe(false);
+    expect(result?.hookId).toBe("block-bash");
   });
 });

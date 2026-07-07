@@ -262,6 +262,8 @@ type Props = {
   composerRestoreText?: string | null;
   /** Bumps when composer restore fires so repeated Esc re-applies the same text. */
   composerRestoreToken?: number;
+  subagentRunning?: boolean;
+  subagentType?: string | null;
 };
 
 export const TEXTAREA_KEY_BINDINGS: KeyBinding[] = [
@@ -276,6 +278,8 @@ export function InputBar({
   disabled = false,
   composerRestoreText,
   composerRestoreToken = 0,
+  subagentRunning = false,
+  subagentType = null,
 }: Props) {
   const { mode, model, toggleMode, setMode, setModel } = usePromptConfig();
   const textareaRef = useRef<TextareaRenderable>(null);
@@ -632,7 +636,7 @@ export function InputBar({
             onContentChange={handleTextareaContentChange}
             placeholder={`Ask anything... "Fix a bug in the database"`}
           />
-          <StatusBar />
+          <StatusBar subagentRunning={subagentRunning} subagentType={subagentType} />
         </box>
       </box>
     </box>

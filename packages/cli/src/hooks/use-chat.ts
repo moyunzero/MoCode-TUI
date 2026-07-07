@@ -68,9 +68,23 @@ import { requestLocalWriteApproval } from "../lib/local-write-approval-ui";
 import { runToolPipeline } from "../lib/tool-pipeline";
 import { loadMergedHooksConfig } from "../lib/hooks/loader";
 import { runMatchingHooks, type HookPayload } from "../lib/hooks/runner";
+import { formatHookBlockToast } from "../lib/hooks/toast-message";
 import { useToast } from "../providers/toast";
 import { executeTaskTool } from "../lib/subagent/runner";
 import type { SubagentType } from "../lib/subagent/types";
+import {
+  buildSlashSubagentPair,
+  finalizeSlashSubagentAssistant,
+} from "../lib/slash-subagent-transcript";
+
+/** Yield so OpenTUI can paint pending Task rows before a blocking subagent run. */
+function waitForUiPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    queueMicrotask(() => {
+      setTimeout(resolve, 0);
+    });
+  });
+}
 
 /**
  * Multi-sentence model guidance returned when the user rejects a blocklisted bash command.
@@ -194,6 +208,8 @@ export function useChat(
   const subagentAbortRef = useRef<AbortController | null>(null);
   const [subagentRunning, setSubagentRunning] = useState(false);
   const [subagentType, setSubagentType] = useState<string | null>(null);
+  /** React-state overlay so pending slash Task rows paint before blocking subagent work. */
+  const [activeSlashMessages, setActiveSlashMessages] = useState<Message[] | null>(null);
   const onPersistErrorRef = useRef(options?.onPersistError);
   onPersistErrorRef.current = options?.onPersistError;
 
@@ -444,7 +460,12 @@ export function useChat(
               hooksConfig.hooks,
             );
             if (hookResult && !hookResult.allowed) {
-              return { allowed: false, reason: hookResult.reason };
+              return {
+                allowed: false,
+                reason: hookResult.reason,
+                hookId: hookResult.hookId,
+                hookTimedOut: hookResult.timedOut,
+              };
             }
             return { allowed: true };
           },
@@ -546,7 +567,11 @@ export function useChat(
           if (pipelineResult.blockedBy === "hook") {
             toast.show({
               variant: "error",
-              message: `Hook blocked ${toolCall.toolName}: ${errorText}`,
+              message: formatHookBlockToast(toolCall.toolName, {
+                reason: errorText,
+                hookId: pipelineResult.hookId,
+                hookTimedOut: pipelineResult.hookTimedOut,
+              }),
             });
           }
         }
@@ -590,6 +615,7 @@ export function useChat(
 
   const interrupt = useCallback(() => {
     subagentAbortRef.current?.abort();
+    setActiveSlashMessages(null);
     turnInterruptedRef.current = true;
     setTurnInterrupted(true);
     killTrackedToolProcesses();
@@ -670,48 +696,47 @@ export function useChat(
       mode: ModeType;
       model: SupportedChatModelId;
     }) => {
-      const result = await runTaskSubagent({
-        input: {
-          subagent_type: params.type,
-          prompt: params.prompt,
-          description: params.slashLine,
-        },
+      const taskInput = {
+        subagent_type: params.type,
+        prompt: params.prompt,
+        description: params.prompt,
+      };
+      const { user, assistant, toolCallId } = buildSlashSubagentPair({
+        type: params.type,
+        prompt: params.prompt,
+        slashLine: params.slashLine,
         mode: params.mode,
         model: params.model,
       });
 
-      const toolCallId = `slash-task-${Date.now()}`;
-      const userMessage: Message = {
-        id: `user-slash-${Date.now()}`,
-        role: "user",
-        parts: [{ type: "text", text: params.slashLine }],
-        metadata: { mode: params.mode, model: params.model },
-      };
-      const assistantMessage: Message = {
-        id: `assistant-slash-${Date.now()}`,
-        role: "assistant",
-        parts: [
-          {
-            type: "tool-task",
-            toolCallId,
-            state: result.error || result.interrupted ? "output-error" : "output-available",
-            input: {
-              subagent_type: params.type,
-              prompt: params.prompt,
-              description: params.slashLine,
-            },
-            ...(result.error || result.interrupted
-              ? { errorText: result.summary }
-              : { output: { summary: result.summary } }),
-          } as Message["parts"][number],
-        ],
-        metadata: { mode: params.mode, model: params.model },
-      };
+      setActiveSlashMessages([user as Message, assistant as Message]);
+      setSubagentRunning(true);
+      setSubagentType(params.type);
+      await waitForUiPaint();
 
-      chat.setMessages((messages) => [...messages, userMessage, assistantMessage]);
+      const result = await runTaskSubagent({
+        input: taskInput,
+        mode: params.mode,
+        model: params.model,
+      });
+
+      const finalizedAssistant = finalizeSlashSubagentAssistant(
+        assistant,
+        toolCallId,
+        taskInput,
+        result,
+      ) as Message;
+
+      chat.setMessages((messages) => [...messages, user as Message, finalizedAssistant]);
+      setActiveSlashMessages(null);
     },
     [chat.setMessages, runTaskSubagent],
   );
+
+  const displayMessages = useMemo(() => {
+    if (!activeSlashMessages) return chat.messages;
+    return [...chat.messages, ...activeSlashMessages];
+  }, [activeSlashMessages, chat.messages]);
 
   const submit = useCallback(
     (params: { userText: string; mode: ModeType; model: SupportedChatModelId }) => {
@@ -758,7 +783,7 @@ export function useChat(
   );
 
   return {
-    messages: chat.messages,
+    messages: displayMessages,
     status: chat.status,
     turnInterrupted,
     subagentRunning,

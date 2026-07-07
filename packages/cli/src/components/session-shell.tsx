@@ -62,7 +62,7 @@ export function SessionShell({
                 </box>
             </scrollbox>
             <box flexShrink={0}>
-                <InputBar onSubmit={onSubmit} disabled={inputDisabled} composerRestoreText={composerRestoreText} composerRestoreToken={composerRestoreToken} />
+                <InputBar onSubmit={onSubmit} disabled={inputDisabled} composerRestoreText={composerRestoreText} composerRestoreToken={composerRestoreToken} subagentRunning={subagentRunning} subagentType={subagentType} />
             </box>
             <box
                 flexShrink={0}
@@ -78,16 +78,7 @@ export function SessionShell({
                     alignItems="center"
                     gap={2}
                 >
-                    {subagentRunning && subagentType ? (
-                        <>
-                            <Spinner mode={mode} />
-                            <text attributes={TextAttributes.DIM}>{subagentType}</text>
-                            <text attributes={TextAttributes.DIM} fg={colors.dimSeparator}>
-                                ·
-                            </text>
-                            <text>esc to interrupt</text>
-                        </>
-                    ) : loading ? (
+                    {loading && !subagentRunning ? (
                         <>
                             {/* Spinner tint follows agent mode (Build = primary, Plan = planMode). */}
                             <Spinner mode={mode} />

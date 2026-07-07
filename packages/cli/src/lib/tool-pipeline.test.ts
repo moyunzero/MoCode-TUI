@@ -65,4 +65,27 @@ describe("runToolPipeline (D-40)", () => {
     expect(executeTool).not.toHaveBeenCalled();
     expect(afterHook).not.toHaveBeenCalled();
   });
+
+  test("beforeHook block forwards hook metadata", async () => {
+    const result = await runToolPipeline({
+      toolCall: { toolName: "bash", toolCallId: "call-3", input: { command: "echo hi" } },
+      beforeHook: async () => ({
+        allowed: false,
+        reason: "Hook timed out",
+        hookId: "slow-hook",
+        hookTimedOut: true,
+      }),
+      approvalGate: async () => ({ approved: true }),
+      executeTool: async () => ({}),
+      afterHook: async () => {},
+    });
+
+    expect(result).toEqual({
+      blocked: true,
+      reason: "Hook timed out",
+      blockedBy: "hook",
+      hookId: "slow-hook",
+      hookTimedOut: true,
+    });
+  });
 });

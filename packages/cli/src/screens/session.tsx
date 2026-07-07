@@ -32,6 +32,10 @@ import {
   useRegisterSessionChatActions,
 } from "../providers/session-chat-actions";
 import { scrollToBottomAfterLayout, streamingTranscriptScrollSignal } from "../utils/list-scroll-nav";
+import {
+  shouldShowPendingTranscriptReply,
+  transcriptHasPendingTask,
+} from "../lib/slash-subagent-transcript";
 
 /**
  * Phase 11 session screen.
@@ -127,7 +131,14 @@ function SessionChat({
   }, []);
 
   useEffect(() => {
-    const { collisions } = initSkillsOnSessionMount(process.cwd());
+    const { collisions, loadError } = initSkillsOnSessionMount(process.cwd());
+    if (loadError) {
+      showToast({
+        variant: "error",
+        message: `Skills disabled: ${loadError}`,
+      });
+      return;
+    }
     for (const name of collisions) {
       showToast({
         variant: "info",
@@ -209,7 +220,13 @@ function SessionChat({
   const isLoading =
     ((status === "submitted" || status === "streaming") && !turnInterrupted) ||
     subagentRunning;
-  const pendingTranscriptReply = isLoading && lastMessage?.role === "user";
+  const hasPendingTaskInTranscript = transcriptHasPendingTask(messages);
+  const pendingTranscriptReply = shouldShowPendingTranscriptReply({
+    isLoading,
+    lastMessageRole: lastMessage?.role,
+    subagentRunning,
+    hasPendingTaskInTranscript,
+  });
   const pendingMode = lastMessage?.metadata?.mode ?? mode;
   const pendingModel = lastMessage?.metadata?.model ?? model;
   const transcriptScrollSignal = streamingTranscriptScrollSignal(isLoading, messages);

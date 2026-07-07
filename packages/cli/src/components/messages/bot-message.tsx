@@ -7,6 +7,7 @@
  * component only reflects part state from the AI SDK message stream.
  */
 import {
+  shouldShowAssistantMessageFooter,
   shouldShowDurationInFooter,
   shouldShowGeneratingInFooter,
 } from "../../lib/bot-message-footer";
@@ -191,6 +192,7 @@ export function BotMessage({
     toolsPending,
   });
   const showDuration = shouldShowDurationInFooter({ streaming, durationMs });
+  const showMessageFooter = shouldShowAssistantMessageFooter(parts);
 
   return (
     <box width="100%" alignItems="center">
@@ -282,6 +284,7 @@ export function BotMessage({
         </box>
       ))}
 
+      {showMessageFooter ? (
       <box paddingX={3} paddingY={1} gap={1} width="100%">
         <box flexDirection="row" gap={2}>
           <text fg={mode === Mode.PLAN ? colors.planMode : colors.primary}>◉</text>
@@ -330,6 +333,7 @@ export function BotMessage({
           </box>
         </box>
       </box>
+      ) : null}
     </box>
   );
 }

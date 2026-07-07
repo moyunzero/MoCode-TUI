@@ -96,7 +96,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "explore",
-    description: "Delegate read-only codebase exploration to the explore subagent",
+    description: "Delegate codebase exploration to subagent",
     value: "/explore",
     action: (ctx) => {
       if (!ctx.submit) {
@@ -108,7 +108,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "plan-research",
-    description: "Delegate architecture and tradeoff research to the plan-research subagent",
+    description: "Delegate architecture research to subagent",
     value: "/plan-research",
     action: (ctx) => {
       if (!ctx.submit) {

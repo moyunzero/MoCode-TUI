@@ -26,6 +26,13 @@ MoCode is a Bun monorepo that pairs a rich **TUI client** with a **Hono API serv
 
 ---
 
+## Quality Contract (Phase 4)
+
+- **Guaranteed**: local tool execution with path sandboxing, approval/hook enforcement, subagent context isolation (summary-only), Esc interruption, and session recovery.
+- **Best effort**: `/explore` and subagent summary quality depends on model behavior; the SaaS path may use fallback summaries under weak-model outputs (while still returning verifiable evidence, such as directory-scan results).
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -220,7 +227,10 @@ Implementation details: [`doc/harness-phase-03-stream-reliability-notes.md`](./d
 | `gpt-5.4-mini` | OpenAI |
 | `gpt-5.4-nano` | OpenAI |
 | `gemini-2.5-flash` | Google |
+| `gemini-2.5-flash-lite` | Google (default; wider free quota) |
 | `llama-3.3-70b-versatile` | Groq |
+| `llama-3.1-8b-instant` | Groq |
+| `openai/gpt-oss-120b` | Groq |
 | `gpt-oss-120b` | Cerebras |
 | `openai/gpt-oss-120b:free` | OpenRouter |
 

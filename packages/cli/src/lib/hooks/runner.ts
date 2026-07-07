@@ -16,6 +16,8 @@ export type HookPayload = {
 export type BeforeHookResult = {
   allowed: boolean;
   reason?: string;
+  hookId?: string;
+  timedOut?: boolean;
 };
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -105,7 +107,7 @@ export async function runBeforeHook(params: {
   const result = await spawnHook(command, payload, timeoutMs);
 
   if (result.timedOut) {
-    return { allowed: false, reason: "Hook timed out" };
+    return { allowed: false, reason: "Hook timed out", timedOut: true };
   }
 
   const stdoutDeny = parseStdoutDeny(result.stdout);
@@ -159,7 +161,7 @@ export async function runMatchingHooks(
         timeoutMs: hook.timeoutMs,
       });
       if (!result.allowed) {
-        return result;
+        return { ...result, hookId: hook.id };
       }
     }
     return { allowed: true };

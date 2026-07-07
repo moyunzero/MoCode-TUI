@@ -21,11 +21,23 @@ const TOOL_TIMEOUT_MS = 90_000;
 /** Free models exercised when the matching env var is present. */
 const FREE_MODELS = [
     {
+        modelId: "gemini-2.5-flash-lite",
+        envKey: "GOOGLE_GENERATIVE_AI_API_KEY",
+    },
+    {
         modelId: "gemini-2.5-flash",
         envKey: "GOOGLE_GENERATIVE_AI_API_KEY",
     },
     {
         modelId: "llama-3.3-70b-versatile",
+        envKey: "GROQ_API_KEY",
+    },
+    {
+        modelId: "llama-3.1-8b-instant",
+        envKey: "GROQ_API_KEY",
+    },
+    {
+        modelId: "openai/gpt-oss-120b",
         envKey: "GROQ_API_KEY",
     },
     {

@@ -59,12 +59,19 @@ type InitSkillsOptions = LoadMergedSkillsOptions & {
 export function initSkillsOnSessionMount(
   cwd: string = process.cwd(),
   options?: InitSkillsOptions,
-): { skills: Skill[]; collisions: string[] } {
-  const skills = loadMergedSkills(cwd, options);
-  const { collisions } = buildSkillCommands(skills);
-  cachedSkills = skills;
-  cachedCollisions = collisions;
-  return { skills, collisions };
+): { skills: Skill[]; collisions: string[]; loadError?: string } {
+  try {
+    const skills = loadMergedSkills(cwd, options);
+    const { collisions } = buildSkillCommands(skills);
+    cachedSkills = skills;
+    cachedCollisions = collisions;
+    return { skills, collisions };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    cachedSkills = [];
+    cachedCollisions = [];
+    return { skills: [], collisions: [], loadError: message };
+  }
 }
 
 export function getCachedSkills(): Skill[] {

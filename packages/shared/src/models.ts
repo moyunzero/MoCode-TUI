@@ -83,7 +83,31 @@ export type ModelPricing = {
       },
     },
     {
+      id: "gemini-2.5-flash-lite",
+      provider: "google",
+      pricing: {
+        inputUsdPerMillionTokens: 0,
+        outputUsdPerMillionTokens: 0,
+      },
+    },
+    {
       id: "llama-3.3-70b-versatile",
+      provider: "groq",
+      pricing: {
+        inputUsdPerMillionTokens: 0,
+        outputUsdPerMillionTokens: 0,
+      },
+    },
+    {
+      id: "llama-3.1-8b-instant",
+      provider: "groq",
+      pricing: {
+        inputUsdPerMillionTokens: 0,
+        outputUsdPerMillionTokens: 0,
+      },
+    },
+    {
+      id: "openai/gpt-oss-120b",
       provider: "groq",
       pricing: {
         inputUsdPerMillionTokens: 0,
@@ -124,4 +148,4 @@ export type ModelPricing = {
   );
   
   /** Default model when the session UI does not expose an explicit picker yet. */
-  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "openai/gpt-oss-120b:free";
+  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gemini-2.5-flash-lite";

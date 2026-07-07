@@ -14,11 +14,13 @@ export type ToolPipelineGateResult = {
   allowed?: boolean;
   approved?: boolean;
   reason?: string;
+  hookId?: string;
+  hookTimedOut?: boolean;
 };
 
 export type RunToolPipelineParams = {
   toolCall: ToolPipelineToolCall;
-  beforeHook: () => Promise<{ allowed: boolean; reason?: string }>;
+  beforeHook: () => Promise<ToolPipelineGateResult & { allowed: boolean }>;
   approvalGate: () => Promise<{ approved: boolean; reason?: string }>;
   executeTool: () => Promise<unknown>;
   afterHook: () => Promise<void>;
@@ -28,6 +30,8 @@ export type ToolPipelineResult = {
   blocked?: boolean;
   reason?: string;
   blockedBy?: "hook" | "approval";
+  hookId?: string;
+  hookTimedOut?: boolean;
 };
 
 /** Runs the D-40 tool pipeline; short-circuits when a beforeHook blocks. */
@@ -36,7 +40,13 @@ export async function runToolPipeline(
 ): Promise<ToolPipelineResult> {
   const before = await params.beforeHook();
   if (!before.allowed) {
-    return { blocked: true, reason: before.reason, blockedBy: "hook" };
+    return {
+      blocked: true,
+      reason: before.reason,
+      blockedBy: "hook",
+      hookId: before.hookId,
+      hookTimedOut: before.hookTimedOut,
+    };
   }
 
   const approval = await params.approvalGate();
