@@ -1,18 +1,17 @@
 import type { RefObject } from "react";
 import { TextAttributes,type ScrollBoxRenderable } from "@opentui/core";
 import { getFilteredCommands } from "./filter-commands";
-import { COMMANDS } from "./commands";
+import type { Command } from "./types";
 import { useTheme } from "../../providers/theme";
 /** Max rows shown before the list scrolls. */
 const MAX_VISIBLE_ITEMS = 8;
-
-/** Fixed column width so command names align in the menu. */
-const COMMAND_COL_WIDTH = Math.max(...COMMANDS.map((command) => command.name.length))+4;
 
 type CommandMenuProps = {
     query: string;
     selectedIndex: number;
     scrollRef: RefObject<ScrollBoxRenderable | null>;
+    commands: Command[];
+    commandColWidth: number;
     onSelect: (index: number) => void;
     onExecute: (index: number) => void;
 };
@@ -21,11 +20,13 @@ type CommandMenuProps = {
 export function CommandMenu({ 
     query, 
     selectedIndex, 
-    scrollRef, 
+    scrollRef,
+    commands,
+    commandColWidth,
     onSelect, 
     onExecute 
 }: CommandMenuProps) {
-    const filtered = getFilteredCommands(query);
+    const filtered = getFilteredCommands(query, commands);
     const visibleHeight = Math.min(filtered.length,MAX_VISIBLE_ITEMS);
     const { colors } = useTheme();
     if(filtered.length === 0) {
@@ -56,7 +57,7 @@ export function CommandMenu({
                         onMouseDown={()=>{onExecute(i)}}
                     >
                         <box
-                            width={COMMAND_COL_WIDTH}
+                            width={commandColWidth}
                             flexShrink={0}    
                         >
                             <text

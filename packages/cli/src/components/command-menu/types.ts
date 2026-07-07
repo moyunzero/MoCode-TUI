@@ -11,6 +11,7 @@ export type CommandContext = {
   model: SupportedChatModelId;
   setMode: (mode: ModeType) => void;
   setModel: (model: SupportedChatModelId) => void;
+  submit?: (text: string) => void;
 };
 
 export type Command = {

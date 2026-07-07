@@ -18,6 +18,7 @@ import { useTheme } from "../providers/theme";
 import { usePromptConfig } from "../providers/prompt-config";
 import { Mode } from "@mocode/shared";
 import { runCommandAction } from "../lib/run-command-action";
+import { getAllCommands, getCommandColWidth } from "../lib/skills/registry";
 
 const MAX_VISIBLE_MENTIONS = 8;
 const CURRENT_DIRECTORY = process.cwd();
@@ -293,6 +294,12 @@ export function InputBar({
   const [mentionCandidates, setMentionCandidates] = useState<MentionCandidate[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
 
+  const commands = useMemo(
+    () => getAllCommands(process.cwd(), { submit: onSubmit }),
+    [onSubmit],
+  );
+  const commandColWidth = useMemo(() => getCommandColWidth(commands), [commands]);
+
   const {
     showCommandMenu,
     commandQuery,
@@ -301,7 +308,7 @@ export function InputBar({
     handleContentChange,
     resolveCommand,
     setSelectedIndex,
-  } = useCommandMenu();
+  } = useCommandMenu(commands);
 
   const showMentionMenu = activeMention !== null;
 
@@ -401,13 +408,14 @@ export function InputBar({
           model,
           setMode,
           setModel,
+          submit: onSubmit,
         },
         (message) => toast.show({ variant: "error", message }),
       );
     } else {
       textarea.insertText(`${command.value} `);
     }
-  }, [renderer, toast, dialog, navigate, mode, model, setMode, setModel]);
+  }, [renderer, toast, dialog, navigate, mode, model, setMode, setModel, onSubmit]);
 
   const handleCommandExecute = useCallback(
     (index: number) => {
@@ -589,6 +597,8 @@ export function InputBar({
                 query={commandQuery}
                 selectedIndex={selectedIndex}
                 scrollRef={scrollRef}
+                commands={commands}
+                commandColWidth={commandColWidth}
                 onSelect={setSelectedIndex}
                 onExecute={handleCommandExecute}
               />

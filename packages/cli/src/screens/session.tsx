@@ -21,6 +21,7 @@ import { getLocalSession } from "../lib/local-sessions";
 import { useKeyboardLayer } from "../providers/keyboard-layer";
 import { parseInitialMessages, sessionLocationSchema } from "../lib/session-navigation";
 import { initMcpOnSessionMount } from "../mcp/session-mcp";
+import { initSkillsOnSessionMount } from "../lib/skills/registry";
 import {
   resolveAutoResumeRequest,
 } from "../lib/stream-interrupt";
@@ -122,6 +123,16 @@ function SessionChat({
   useEffect(() => {
     return initMcpOnSessionMount(process.cwd());
   }, []);
+
+  useEffect(() => {
+    const { collisions } = initSkillsOnSessionMount(process.cwd());
+    for (const name of collisions) {
+      showToast({
+        variant: "info",
+        message: `Skill "${name}" skipped — conflicts with built-in /${name}`,
+      });
+    }
+  }, [showToast]);
 
   // Stop in-flight generation when leaving session — skip when already idle.
   useEffect(() => {
