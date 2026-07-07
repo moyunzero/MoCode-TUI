@@ -193,6 +193,7 @@ export function useChat(
   /** Active subagent run — Esc aborts via linked AbortController (D-10). */
   const subagentAbortRef = useRef<AbortController | null>(null);
   const [subagentRunning, setSubagentRunning] = useState(false);
+  const [subagentType, setSubagentType] = useState<string | null>(null);
   const onPersistErrorRef = useRef(options?.onPersistError);
   onPersistErrorRef.current = options?.onPersistError;
 
@@ -290,6 +291,12 @@ export function useChat(
       const controller = new AbortController();
       subagentAbortRef.current = controller;
       setSubagentRunning(true);
+      if (params.input != null && typeof params.input === "object") {
+        const type = (params.input as Record<string, unknown>).subagent_type;
+        setSubagentType(typeof type === "string" ? type : null);
+      } else {
+        setSubagentType(null);
+      }
 
       try {
         const result = await executeTaskTool({
@@ -317,6 +324,7 @@ export function useChat(
       } finally {
         subagentAbortRef.current = null;
         setSubagentRunning(false);
+        setSubagentType(null);
       }
     },
     [dialog, sessionId],
@@ -754,6 +762,7 @@ export function useChat(
     status: chat.status,
     turnInterrupted,
     subagentRunning,
+    subagentType,
     error: chat.error
       ? new Error(formatChatStreamError(chat.error))
       : undefined,

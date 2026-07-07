@@ -85,6 +85,8 @@ function SessionChat({
     messages,
     status,
     turnInterrupted,
+    subagentRunning,
+    subagentType,
     submit,
     abort,
     interrupt,
@@ -205,7 +207,8 @@ function SessionChat({
 
   const lastMessage = messages.at(-1);
   const isLoading =
-    (status === "submitted" || status === "streaming") && !turnInterrupted;
+    ((status === "submitted" || status === "streaming") && !turnInterrupted) ||
+    subagentRunning;
   const pendingTranscriptReply = isLoading && lastMessage?.role === "user";
   const pendingMode = lastMessage?.metadata?.mode ?? mode;
   const pendingModel = lastMessage?.metadata?.model ?? model;
@@ -230,6 +233,9 @@ function SessionChat({
       }}
       loading={isLoading}
       interruptible={isLoading}
+      subagentRunning={subagentRunning}
+      subagentType={subagentType}
+      inputDisabled={isLoading}
       composerRestoreText={composerRestoreText}
       composerRestoreToken={composerRestoreToken}
       transcriptScrollRef={transcriptScrollRef}
