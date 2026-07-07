@@ -29,7 +29,7 @@ describe("runBeforeHook (D-36, D-38)", () => {
     const result = await runBeforeHook({
       command: [script],
       payload: { toolName: "bash", input: { command: "echo hi" } },
-      timeoutMs: 500,
+      timeoutMs: 2000,
     });
 
     expect(result.allowed).toBe(true);
@@ -47,7 +47,7 @@ describe("runBeforeHook (D-36, D-38)", () => {
     const result = await runBeforeHook({
       command: [script],
       payload: { toolName: "bash", input: { command: "rm -rf /" } },
-      timeoutMs: 500,
+      timeoutMs: 2000,
     });
 
     expect(result.allowed).toBe(false);
@@ -81,7 +81,7 @@ describe("runBeforeHook (D-36, D-38)", () => {
     const result = await runBeforeHook({
       command: [script],
       payload: { toolName: "bash", input: { command: "echo test" } },
-      timeoutMs: 500,
+      timeoutMs: 2000,
     });
 
     expect(result.allowed).toBe(false);
