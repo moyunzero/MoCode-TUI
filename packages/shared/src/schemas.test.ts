@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { Mode, modeSchema, getToolContracts } from "./schemas";
+import {
+  Mode,
+  modeSchema,
+  getToolContracts,
+  readOnlyToolContracts,
+  buildToolContracts,
+  toolInputSchemas,
+} from "./schemas";
 import {
   DEFAULT_CHAT_MODEL_ID,
   findSupportedChatModel,
@@ -51,5 +58,43 @@ describe("getToolContracts", () => {
         "writeFile",
       ].sort(),
     );
+  });
+});
+
+describe("task tool contract (D-01, HARNESS-09)", () => {
+  test("PLAN mode includes task tool", () => {
+    const tools = getToolContracts(Mode.PLAN);
+    expect(tools).toHaveProperty("task");
+  });
+
+  test("BUILD mode includes task tool", () => {
+    const tools = getToolContracts(Mode.BUILD);
+    expect(tools).toHaveProperty("task");
+  });
+
+  test("task appears in readOnlyToolContracts and buildToolContracts", () => {
+    expect(readOnlyToolContracts).toHaveProperty("task");
+    expect(buildToolContracts).toHaveProperty("task");
+  });
+
+  test("task inputSchema accepts explore and plan-research subagent_type", () => {
+    const schema = toolInputSchemas.task;
+    expect(schema.safeParse({
+      subagent_type: "explore",
+      prompt: "Find auth handlers",
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      subagent_type: "plan-research",
+      prompt: "Compare JWT vs session auth",
+      description: "Architecture research",
+    }).success).toBe(true);
+  });
+
+  test("task inputSchema rejects unknown subagent_type", () => {
+    const schema = toolInputSchemas.task;
+    expect(schema.safeParse({
+      subagent_type: "custom-agent",
+      prompt: "Do work",
+    }).success).toBe(false);
   });
 });
