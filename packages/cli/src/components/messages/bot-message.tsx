@@ -10,10 +10,20 @@ import {
   shouldShowDurationInFooter,
   shouldShowGeneratingInFooter,
 } from "../../lib/bot-message-footer";
+import {
+  extractTaskSummary,
+  formatTaskSummaryLines,
+  formatTaskToolDisplay,
+  getHiddenTaskSummaryLineCount,
+  shouldCapTaskSummary,
+  TASK_SUMMARY_MAX_VISIBLE_LINES,
+} from "../../lib/bot-message-task";
 import { groupConsecutiveParts, partRenderKey } from "../../lib/bot-message-parts";
 import type { LanguageModelUsage } from "ai";
 import prettyMs from "pretty-ms";
+import { useState } from "react";
 import { EmptyBorder } from "../border";
+import { Spinner } from "../spinner";
 import { useTheme } from "../../providers/theme";
 import type { Message } from "../../hooks/use-chat";
 import { Mode, type ModeType } from "@mocode/shared";
@@ -36,11 +46,11 @@ function formatToolName(name: string): string {
   return name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/^./, (c) => c.toUpperCase());
-};
+}
 
 function isToolPart(part: ClientMessagePart): part is ToolPart {
   return part.type === "dynamic-tool" || part.type.startsWith("tool-");
-};
+}
 
 /** Summarize tool arguments as a single dim line (paths, patterns, etc.). */
 function formatToolArgs(tc: ToolPart): string {
@@ -87,7 +97,79 @@ function formatBashToolDisplay(input: unknown): BashToolDisplay | null {
   return { command: record.command, description };
 }
 
-export function BotMessage({ 
+function TaskToolBlock({
+  part,
+  mode,
+}: {
+  part: ToolPart;
+  mode: ModeType;
+}) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const taskDisplay =
+    "input" in part ? formatTaskToolDisplay(part.input) : null;
+  const isPending =
+    part.state !== "output-available" && part.state !== "output-error";
+  const summary = extractTaskSummary(part);
+  const summaryLines = summary != null ? formatTaskSummaryLines(summary) : [];
+  const capped = shouldCapTaskSummary(summaryLines);
+  const visibleLines =
+    capped && !expanded
+      ? summaryLines.slice(0, TASK_SUMMARY_MAX_VISIBLE_LINES)
+      : summaryLines;
+  const hiddenCount = getHiddenTaskSummaryLineCount(summaryLines);
+  const isError = part.state === "output-error";
+
+  return (
+    <box
+      border={["left"]}
+      borderColor={colors.thinkingBorder}
+      customBorderChars={{
+        ...EmptyBorder,
+        vertical: "│",
+      }}
+      width="100%"
+      paddingX={2}
+      gap={1}
+    >
+      <box flexDirection="row" alignItems="center" gap={1} width="100%">
+        <text attributes={TextAttributes.DIM}>
+          <em fg={colors.info}>Task:</em> {taskDisplay?.primaryText ?? formatToolArgs(part)}
+        </text>
+        {isPending ? <Spinner mode={mode} /> : null}
+      </box>
+      {taskDisplay?.showSecondarySubagentType ? (
+        <text attributes={TextAttributes.DIM}> {taskDisplay.subagentType}</text>
+      ) : null}
+      {summary != null ? (
+        <box width="100%" gap={1}>
+          {visibleLines.map((line) => (
+            <text
+              key={`${part.toolCallId}-summary-${line}`}
+              fg={isError ? colors.error : undefined}
+            >
+              {line}
+            </text>
+          ))}
+          {capped ? (
+            <text
+              attributes={TextAttributes.DIM}
+              onMouseDown={() => {
+                setExpanded((value) => !value);
+              }}
+            >
+              {expanded
+                ? "… click to collapse"
+                : `… +${hiddenCount} lines — click to expand`}
+            </text>
+          ) : null}
+        </box>
+      ) : null}
+    </box>
+  );
+}
+
+export function BotMessage({
   parts,
   model,
   mode,
@@ -138,6 +220,17 @@ export function BotMessage({
             if (isToolPart(part)) {
               const toolName =
                 part.type === "dynamic-tool" ? part.toolName : part.type.slice("tool-".length);
+
+              if (toolName === "task") {
+                return (
+                  <TaskToolBlock
+                    key={part.toolCallId}
+                    part={part}
+                    mode={mode}
+                  />
+                );
+              }
+
               const bashDisplay =
                 toolName === "bash" && "input" in part
                   ? formatBashToolDisplay(part.input)
@@ -169,9 +262,9 @@ export function BotMessage({
                     {statusSuffix}
                     {errorSuffix}
                   </text>
-                  {bashDisplay?.description && (
+                  {bashDisplay?.description ? (
                     <text attributes={TextAttributes.DIM}> {bashDisplay.description}</text>
-                  )}
+                  ) : null}
                 </box>
               );
             }
@@ -183,7 +276,7 @@ export function BotMessage({
                 </box>
               );
             }
-            
+
             return null;
           })}
         </box>
@@ -239,4 +332,4 @@ export function BotMessage({
       </box>
     </box>
   );
-};
+}
