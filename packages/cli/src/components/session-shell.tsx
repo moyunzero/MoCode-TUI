@@ -3,6 +3,7 @@ import type { ReactNode, RefObject } from "react";
 import { InputBar } from "./input-bar";
 import { Spinner } from "./spinner";
 import { usePromptConfig } from "../providers/prompt-config";
+import { useTheme } from "../providers/theme";
 
 /** Session layout: scrollable transcript, input bar, and status footer. */
 type Props = {
@@ -13,6 +14,9 @@ type Props = {
     loading?: boolean;
     /** When true with loading, shows "esc to interrupt" hint. */
     interruptible?: boolean;
+    /** While a Task subagent runs — shows type in footer (D-21). */
+    subagentRunning?: boolean;
+    subagentType?: string | null;
     composerRestoreText?: string | null;
     composerRestoreToken?: number;
     transcriptScrollRef?: RefObject<ScrollBoxRenderable | null>;
@@ -24,6 +28,8 @@ export function SessionShell({
     inputDisabled = false, 
     loading = false ,
     interruptible = false,
+    subagentRunning = false,
+    subagentType = null,
     composerRestoreText = null,
     composerRestoreToken = 0,
     transcriptScrollRef,
@@ -31,6 +37,7 @@ export function SessionShell({
 
     // Footer spinner reads mode so its color matches the input border accent.
     const { mode } = usePromptConfig();
+    const { colors } = useTheme();
     return (
         <box 
             width="100%" 
@@ -55,7 +62,7 @@ export function SessionShell({
                 </box>
             </scrollbox>
             <box flexShrink={0}>
-                <InputBar onSubmit={onSubmit} disabled={inputDisabled} composerRestoreText={composerRestoreText} composerRestoreToken={composerRestoreToken} />
+                <InputBar onSubmit={onSubmit} disabled={inputDisabled} composerRestoreText={composerRestoreText} composerRestoreToken={composerRestoreToken} subagentRunning={subagentRunning} subagentType={subagentType} />
             </box>
             <box
                 flexShrink={0}
@@ -71,15 +78,13 @@ export function SessionShell({
                     alignItems="center"
                     gap={2}
                 >
-                    {loading ? (
+                    {loading && !subagentRunning ? (
                         <>
                             {/* Spinner tint follows agent mode (Build = primary, Plan = planMode). */}
-                            <Spinner 
-                                mode={mode}
-                            />
-                            {interruptible ?<text>esc to interrupt</text>:null}
+                            <Spinner mode={mode} />
+                            {interruptible ? <text>esc to interrupt</text> : null}
                         </>
-                    ):null}
+                    ) : null}
                 </box>
                 <box
                     flexDirection="row"

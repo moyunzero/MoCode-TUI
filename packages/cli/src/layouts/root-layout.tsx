@@ -6,6 +6,7 @@ import { KeyboardLayerProvider } from "../providers/keyboard-layer";
 import { ThemeProvider } from "../providers/theme";
 import { PromptConfigProvider } from "../providers/prompt-config";
 import { KeysSetupGate } from "../components/keys-setup-gate";
+import { SkillsInit } from "../components/skills-init";
 
 /**
  * Provider stack for the CLI shell.
@@ -16,6 +17,7 @@ export function RootLayout(){
     return (
         <ThemeProvider>
             <ToastProvider>
+                <SkillsInit />
                 <KeyboardLayerProvider>
                     <DialogProvider>
                         <KeysSetupGate />

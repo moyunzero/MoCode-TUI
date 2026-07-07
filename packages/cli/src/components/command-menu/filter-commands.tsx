@@ -1,10 +1,13 @@
 import type { Command } from "./types";
-import { COMMANDS } from "./commands";
+import { getAllCommands } from "../../lib/skills/registry";
 
 /** Prefix match on command name; empty query returns the full list. */
-export function getFilteredCommands(query:string):Command[] {
-    if(query.length === 0) return COMMANDS;
-    return COMMANDS.filter((command) => {
-        return command.name.toLowerCase().startsWith(query.toLowerCase());
-    });
+export function getFilteredCommands(
+  query: string,
+  commands: Command[] = getAllCommands(),
+): Command[] {
+  if (query.length === 0) return commands;
+  return commands.filter((command) => {
+    return command.name.toLowerCase().startsWith(query.toLowerCase());
+  });
 }

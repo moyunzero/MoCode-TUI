@@ -19,7 +19,7 @@ type UseCommandMenuReturn = {
     setSelectedIndex: (index: number) => void;
 }
 
-export function useCommandMenu():UseCommandMenuReturn {
+export function useCommandMenu(commands: Command[]): UseCommandMenuReturn {
     const scrollRef = useRef<ScrollBoxRenderable>(null);
     const [textValue,setTextValue] = useState("");
     const [selectedIndex,setSelectedIndex] = useState(0);
@@ -36,7 +36,10 @@ export function useCommandMenu():UseCommandMenuReturn {
     // Text after "/" used for prefix filtering; empty string shows all commands.
     const commandQuery = showCommandMenu && textValue.startsWith("/") ? textValue.slice(1) : "";
 
-    const filteredCommands = useMemo(()=>getFilteredCommands(commandQuery),[commandQuery]);
+    const filteredCommands = useMemo(
+      () => getFilteredCommands(commandQuery, commands),
+      [commandQuery, commands],
+    );
     const pageSize = visibleItemCount(filteredCommands.length, MAX_VISIBLE_ITEMS);
 
     useLayoutEffect(() => {

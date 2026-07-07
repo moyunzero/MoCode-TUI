@@ -36,6 +36,7 @@
     "ai": "^6.0.208",
     "chokidar": "^5.0.0",
     "date-fns": "^4.4.0",
+    "gray-matter": "4.0.3",
     "hono": "^4.12.25",
     "open": "^11.0.0",
     "opentui-spinner": "^0.0.7",

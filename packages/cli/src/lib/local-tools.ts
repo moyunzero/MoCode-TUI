@@ -64,6 +64,22 @@ function truncate(value: string, limit: number) {
     : value;
 }
 
+/** Returns a line slice when line_start/line_end are set (1-based, inclusive). */
+function sliceFileLines(content: string, lineStart?: number, lineEnd?: number): string {
+  if (lineStart === undefined && lineEnd === undefined) {
+    return content;
+  }
+
+  const lines = content.split("\n");
+  const startIndex = Math.max(1, lineStart ?? 1) - 1;
+  const endIndex = lineEnd === undefined ? lines.length : Math.min(lineEnd, lines.length);
+  if (endIndex < startIndex + 1) {
+    return "";
+  }
+
+  return lines.slice(startIndex, endIndex).join("\n");
+}
+
 /**
  * Dispatch a single tool call to the matching local handler.
  *
@@ -82,9 +98,10 @@ export async function executeLocalTool(toolName: string, input: unknown, mode: M
 
   switch (toolName) {
     case "readFile": {
-      const { path } = toolInputSchemas.readFile.parse(input);
+      const { path, line_start, line_end } = toolInputSchemas.readFile.parse(input);
       const { resolved } = resolveInsideCwd(path);
-      const content = await readFile(resolved, "utf-8");
+      const raw = await readFile(resolved, "utf-8");
+      const content = sliceFileLines(raw, line_start, line_end);
       return content.length > MAX_FILE_SIZE
         ? { content: content.slice(0, MAX_FILE_SIZE), truncated: true, totalLength: content.length }
         : { content };

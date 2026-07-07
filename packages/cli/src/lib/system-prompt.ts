@@ -8,11 +8,17 @@
  */
 import type { ModeType } from "@mocode/shared";
 
+export type SkillPromptEntry = {
+  name: string;
+  description: string;
+};
+
 type SystemPromptParams = {
   mode: ModeType;
   mcpToolNames?: string[];
   /** True when the current user turn explicitly requests MCP — strengthens routing. */
   mcpRequested?: boolean;
+  skills?: SkillPromptEntry[];
 };
 
 const BUILD_BASH_PERMISSION_RULES = `
@@ -57,6 +63,22 @@ function buildMcpToolsSection(
   5. PLAN mode exposes read-only MCP tools only (${mode === "PLAN" ? "filtered" : "get/list/read/fetch/search prefixes"})`;
 }
 
+/** Lists discoverable skills for the main agent (D-29). */
+export function buildSkillsSection(skills: SkillPromptEntry[]): string {
+  if (skills.length === 0) {
+    return "";
+  }
+
+  const bullets = skills
+    .map((skill) => `- **${skill.name}** — ${skill.description}`)
+    .join("\n  ");
+
+  return `
+  # Available Skills
+  Invoke via slash command (e.g. /skill-name):
+  ${bullets}`;
+}
+
 /** Thinking steps reorder when MCP is live — route external tools before repo grep/glob. */
 function buildThinkingProcess(hasMcp: boolean): string {
   if (hasMcp) {
@@ -85,6 +107,7 @@ export function buildSystemPrompt({
   mode,
   mcpToolNames = [],
   mcpRequested = false,
+  skills = [],
 }: SystemPromptParams): string {
   const parts: string[] = [];
 
@@ -123,6 +146,11 @@ export function buildSystemPrompt({
   const mcpSection = buildMcpToolsSection(mode, mcpToolNames, mcpRequested);
   if (mcpSection) {
     parts.push(mcpSection);
+  }
+
+  const skillsSection = buildSkillsSection(skills);
+  if (skillsSection) {
+    parts.push(skillsSection);
   }
 
   parts.push(buildThinkingProcess(hasMcp));

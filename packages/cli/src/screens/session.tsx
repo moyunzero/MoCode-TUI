@@ -31,6 +31,10 @@ import {
   useRegisterSessionChatActions,
 } from "../providers/session-chat-actions";
 import { scrollToBottomAfterLayout, streamingTranscriptScrollSignal } from "../utils/list-scroll-nav";
+import {
+  shouldShowPendingTranscriptReply,
+  transcriptHasPendingTask,
+} from "../lib/slash-subagent-transcript";
 
 /**
  * Phase 11 session screen.
@@ -84,6 +88,8 @@ function SessionChat({
     messages,
     status,
     turnInterrupted,
+    subagentRunning,
+    subagentType,
     submit,
     abort,
     interrupt,
@@ -194,8 +200,15 @@ function SessionChat({
 
   const lastMessage = messages.at(-1);
   const isLoading =
-    (status === "submitted" || status === "streaming") && !turnInterrupted;
-  const pendingTranscriptReply = isLoading && lastMessage?.role === "user";
+    ((status === "submitted" || status === "streaming") && !turnInterrupted) ||
+    subagentRunning;
+  const hasPendingTaskInTranscript = transcriptHasPendingTask(messages);
+  const pendingTranscriptReply = shouldShowPendingTranscriptReply({
+    isLoading,
+    lastMessageRole: lastMessage?.role,
+    subagentRunning,
+    hasPendingTaskInTranscript,
+  });
   const pendingMode = lastMessage?.metadata?.mode ?? mode;
   const pendingModel = lastMessage?.metadata?.model ?? model;
   const transcriptScrollSignal = streamingTranscriptScrollSignal(isLoading, messages);
@@ -219,6 +232,9 @@ function SessionChat({
       }}
       loading={isLoading}
       interruptible={isLoading}
+      subagentRunning={subagentRunning}
+      subagentType={subagentType}
+      inputDisabled={isLoading}
       composerRestoreText={composerRestoreText}
       composerRestoreToken={composerRestoreToken}
       transcriptScrollRef={transcriptScrollRef}

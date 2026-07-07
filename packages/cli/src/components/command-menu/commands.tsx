@@ -95,6 +95,30 @@ export const COMMANDS: Command[] = [
     },
   },
   {
+    name: "explore",
+    description: "Delegate codebase exploration to subagent",
+    value: "/explore",
+    action: (ctx) => {
+      if (!ctx.submit) {
+        ctx.toast.show({ variant: "error", message: "Open a session first" });
+        return;
+      }
+      void ctx.submit("/explore ");
+    },
+  },
+  {
+    name: "plan-research",
+    description: "Delegate architecture research to subagent",
+    value: "/plan-research",
+    action: (ctx) => {
+      if (!ctx.submit) {
+        ctx.toast.show({ variant: "error", message: "Open a session first" });
+        return;
+      }
+      void ctx.submit("/plan-research ");
+    },
+  },
+  {
     name: "mcp",
     description: "Manage MCP servers",
     value: "/mcp",

@@ -17,6 +17,15 @@ export function shouldShowDurationInFooter(params: {
   return params.durationMs != null && params.durationMs > 0;
 }
 
+/** Task-only assistant rows use the tool block frame — skip the generic ◉ footer. */
+export function shouldShowAssistantMessageFooter(
+  parts: Array<{ type: string }>,
+): boolean {
+  const meaningful = parts.filter((part) => part.type !== "step-start");
+  if (meaningful.length === 0) return false;
+  return meaningful.some((part) => part.type === "text" || part.type === "reasoning");
+}
+
 function formatDuration(durationMs: number): string {
   const seconds = durationMs / 1000;
   if (seconds < 10) return `${seconds.toFixed(1)}s`;

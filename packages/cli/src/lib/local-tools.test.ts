@@ -13,3 +13,15 @@ describe("executeLocalTool PLAN mode guards", () => {
     );
   });
 });
+
+describe("executeLocalTool readFile", () => {
+  test("accepts optional line_start and line_end for partial reads", async () => {
+    const result = (await executeLocalTool(
+      "readFile",
+      { path: "package.json", line_start: 1, line_end: 1 },
+      Mode.PLAN,
+    )) as { content: string };
+
+    expect(result.content).toBe("{");
+  });
+});

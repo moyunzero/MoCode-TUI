@@ -18,6 +18,7 @@ import { useTheme } from "../providers/theme";
 import { usePromptConfig } from "../providers/prompt-config";
 import { Mode } from "@mocode/shared";
 import { runCommandAction } from "../lib/run-command-action";
+import { getAllCommands, getCommandColWidth, subscribeSkillsCache } from "../lib/skills/registry";
 
 const MAX_VISIBLE_MENTIONS = 8;
 const CURRENT_DIRECTORY = process.cwd();
@@ -261,6 +262,8 @@ type Props = {
   composerRestoreText?: string | null;
   /** Bumps when composer restore fires so repeated Esc re-applies the same text. */
   composerRestoreToken?: number;
+  subagentRunning?: boolean;
+  subagentType?: string | null;
 };
 
 export const TEXTAREA_KEY_BINDINGS: KeyBinding[] = [
@@ -275,6 +278,8 @@ export function InputBar({
   disabled = false,
   composerRestoreText,
   composerRestoreToken = 0,
+  subagentRunning = false,
+  subagentType = null,
 }: Props) {
   const { mode, model, toggleMode, setMode, setModel } = usePromptConfig();
   const textareaRef = useRef<TextareaRenderable>(null);
@@ -292,6 +297,19 @@ export function InputBar({
   const [activeMention, setActiveMention] = useState<MentionMatch | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<MentionCandidate[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [skillsCacheRevision, setSkillsCacheRevision] = useState(0);
+
+  useEffect(() => {
+    return subscribeSkillsCache(() => {
+      setSkillsCacheRevision((revision) => revision + 1);
+    });
+  }, []);
+
+  const commands = useMemo(() => {
+    void skillsCacheRevision;
+    return getAllCommands(process.cwd(), { submit: onSubmit });
+  }, [onSubmit, skillsCacheRevision]);
+  const commandColWidth = useMemo(() => getCommandColWidth(commands), [commands]);
 
   const {
     showCommandMenu,
@@ -301,7 +319,7 @@ export function InputBar({
     handleContentChange,
     resolveCommand,
     setSelectedIndex,
-  } = useCommandMenu();
+  } = useCommandMenu(commands);
 
   const showMentionMenu = activeMention !== null;
 
@@ -401,13 +419,14 @@ export function InputBar({
           model,
           setMode,
           setModel,
+          submit: onSubmit,
         },
         (message) => toast.show({ variant: "error", message }),
       );
     } else {
       textarea.insertText(`${command.value} `);
     }
-  }, [renderer, toast, dialog, navigate, mode, model, setMode, setModel]);
+  }, [renderer, toast, dialog, navigate, mode, model, setMode, setModel, onSubmit]);
 
   const handleCommandExecute = useCallback(
     (index: number) => {
@@ -589,6 +608,8 @@ export function InputBar({
                 query={commandQuery}
                 selectedIndex={selectedIndex}
                 scrollRef={scrollRef}
+                commands={commands}
+                commandColWidth={commandColWidth}
                 onSelect={setSelectedIndex}
                 onExecute={handleCommandExecute}
               />
@@ -622,7 +643,7 @@ export function InputBar({
             onContentChange={handleTextareaContentChange}
             placeholder={`Ask anything... "Fix a bug in the database"`}
           />
-          <StatusBar />
+          <StatusBar subagentRunning={subagentRunning} subagentType={subagentType} />
         </box>
       </box>
     </box>

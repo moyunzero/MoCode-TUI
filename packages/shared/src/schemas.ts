@@ -25,6 +25,18 @@ export type ModeType = (typeof Mode)[keyof typeof Mode];
 export const toolInputSchemas = {
   readFile: z.object({
     path: z.string().describe("Relative path to the file to read"),
+    line_start: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Optional 1-based start line (inclusive) for partial reads"),
+    line_end: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Optional 1-based end line (inclusive) for partial reads"),
   }),
   listDirectory: z.object({
     path: z.string().default(".").describe("Relative directory path to list"),
@@ -65,12 +77,24 @@ export const toolInputSchemas = {
         "Branch or commit SHA to compare working tree against (ignored when staged is true)",
       ),
   }),
+  // Phase 04 (D-01): delegate to a specialized subagent; summary-only result returned to parent.
+  task: z.object({
+    subagent_type: z
+      .enum(["explore", "plan-research"])
+      .describe("Builtin subagent to run"),
+    prompt: z.string().describe("Task instructions for the subagent"),
+    description: z
+      .string()
+      .optional()
+      .describe("Short human-readable label shown in the transcript"),
+  }),
 } as const;
 
 /** Read-only tools available in PLAN mode (and as a subset of BUILD). */
 export const readOnlyToolContracts = {
   readFile: tool({
-    description: "Read a file from the current project directory.",
+    description:
+      "Read a file from the current project directory. Use line_start/line_end for partial reads (1-based, inclusive).",
     inputSchema: toolInputSchemas.readFile,
   }),
   listDirectory: tool({
@@ -95,6 +119,11 @@ export const readOnlyToolContracts = {
     description:
       "Get git diff. Default: unstaged changes. Use staged or ref to narrow scope.",
     inputSchema: toolInputSchemas.gitDiff,
+  }),
+  task: tool({
+    description:
+      "Delegate work to a specialized subagent (explore or plan-research). Returns a summary only.",
+    inputSchema: toolInputSchemas.task,
   }),
 } as const;
 

@@ -45,6 +45,9 @@ import { resolveChatModel } from "../lib/local-model";
 import { LocalChatTransport, stripIncompleteAssistantMessages } from "../lib/local-chat-transport";
 import { hasVisibleAssistantContent } from "@mocode/shared";
 import { buildSystemPrompt } from "../lib/system-prompt";
+import { expandSkillSlashMessage } from "../lib/skills/expand";
+import { loadMergedSkills } from "../lib/skills/loader";
+import { getCachedSkills } from "../lib/skills/registry";
 import {
   collectPendingToolCallIds,
   finalizeInterruptedAssistant,
@@ -62,6 +65,26 @@ import {
   LOCAL_WRITE_REJECT_ERROR_TEXT,
 } from "../lib/local-write-approval";
 import { requestLocalWriteApproval } from "../lib/local-write-approval-ui";
+import { runToolPipeline } from "../lib/tool-pipeline";
+import { loadMergedHooksConfig } from "../lib/hooks/loader";
+import { runMatchingHooks, type HookPayload } from "../lib/hooks/runner";
+import { formatHookBlockToast } from "../lib/hooks/toast-message";
+import { useToast } from "../providers/toast";
+import { executeTaskTool } from "../lib/subagent/runner";
+import type { SubagentType } from "../lib/subagent/types";
+import {
+  buildSlashSubagentPair,
+  finalizeSlashSubagentAssistant,
+} from "../lib/slash-subagent-transcript";
+
+/** Yield so OpenTUI can paint pending Task rows before a blocking subagent run. */
+function waitForUiPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    queueMicrotask(() => {
+      setTimeout(resolve, 0);
+    });
+  });
+}
 
 /**
  * Multi-sentence model guidance returned when the user rejects a blocklisted bash command.
@@ -151,12 +174,21 @@ function reportPersistError(
   }
 }
 
+function resolveLoadedSkills() {
+  const cached = getCachedSkills();
+  if (cached.length > 0) {
+    return cached;
+  }
+  return loadMergedSkills(process.cwd()).skills;
+}
+
 export function useChat(
   sessionId: string,
   initialMessages: Message[],
   options?: { onPersistError?: (message: string) => void },
 ) {
   const dialog = useDialog();
+  const toast = useToast();
   // Session-scoped allowlist: "Allow for this session" skips future prompts for the same
   // normalized command string. Owned here (not a global singleton) so each chat session
   // resets on mount and cannot leak across sessions (Phase 01, plan 02).
@@ -168,9 +200,16 @@ export function useChat(
   const skipToolOutputIdsRef = useRef(new Set<string>());
   /** Session allowlist for writeFile/editFile after "Allow for this session". */
   const sessionWriteAllowRef = useRef(new Set<string>());
+  const hooksConfigRef = useRef<ReturnType<typeof loadMergedHooksConfig> | null>(null);
   /** Blocks sendAutomaticallyWhen after Esc finalizes tool output-error parts. */
   const turnInterruptedRef = useRef(false);
   const [turnInterrupted, setTurnInterrupted] = useState(false);
+  /** Active subagent run — Esc aborts via linked AbortController (D-10). */
+  const subagentAbortRef = useRef<AbortController | null>(null);
+  const [subagentRunning, setSubagentRunning] = useState(false);
+  const [subagentType, setSubagentType] = useState<string | null>(null);
+  /** React-state overlay so pending slash Task rows paint before blocking subagent work. */
+  const [activeSlashMessages, setActiveSlashMessages] = useState<Message[] | null>(null);
   const onPersistErrorRef = useRef(options?.onPersistError);
   onPersistErrorRef.current = options?.onPersistError;
 
@@ -180,7 +219,11 @@ export function useChat(
       return new LocalChatTransport({
         resolveModel: resolveChatModel,
         getMcpManager,
-        buildSystemPrompt,
+        buildSystemPrompt: (params) =>
+          buildSystemPrompt({
+            ...params,
+            skills: resolveLoadedSkills(),
+          }),
       }) as ChatTransport<Message>;
     }
 
@@ -248,6 +291,61 @@ export function useChat(
     });
   }, [sessionId]);
 
+  const runTaskSubagent = useCallback(
+    async (params: {
+      input: unknown;
+      mode: ModeType;
+      model?: SupportedChatModelId | string;
+      toolCallId?: string;
+      shouldSkipOutput?: () => boolean;
+      addOutput?: (result: {
+        summary: string;
+        error?: boolean;
+        interrupted?: boolean;
+      }) => void;
+    }) => {
+      const controller = new AbortController();
+      subagentAbortRef.current = controller;
+      setSubagentRunning(true);
+      if (params.input != null && typeof params.input === "object") {
+        const type = (params.input as Record<string, unknown>).subagent_type;
+        setSubagentType(typeof type === "string" ? type : null);
+      } else {
+        setSubagentType(null);
+      }
+
+      try {
+        const result = await executeTaskTool({
+          input: params.input,
+          mode: params.mode,
+          model: params.model,
+          sessionId,
+          abortSignal: controller.signal,
+          deps: {
+            getMcpManager,
+            dialog,
+            cwd: process.cwd(),
+          },
+        });
+
+        if (params.addOutput) {
+          if (params.shouldSkipOutput?.()) {
+            return result;
+          }
+          params.addOutput(result);
+          return result;
+        }
+
+        return result;
+      } finally {
+        subagentAbortRef.current = null;
+        setSubagentRunning(false);
+        setSubagentType(null);
+      }
+    },
+    [dialog, sessionId],
+  );
+
   const chat = useAiChat<Message>({
     id: sessionId,
     messages: initialMessages,
@@ -262,114 +360,223 @@ export function useChat(
         Mode.BUILD;
 
       const isMcpCall = looksLikeMcpToolName(toolCall.toolName);
+
+      // Phase 04 (04-03): Task subagent — synchronous blocking, summary-only (D-03, D-04).
+      if (toolCall.toolName === "task") {
+        if (shouldSkipToolOutput()) return;
+
+        const metadata = chat.messages.findLast(
+          (message) => message.metadata?.mode && message.metadata?.model,
+        )?.metadata;
+
+        await runTaskSubagent({
+          input: toolCall.input,
+          mode,
+          model: metadata?.model,
+          shouldSkipOutput: shouldSkipToolOutput,
+          addOutput: (result) => {
+            if (result.error || result.interrupted) {
+              chat.addToolOutput({
+                tool: "task",
+                toolCallId: toolCall.toolCallId,
+                state: "output-error",
+                errorText: result.summary,
+              });
+              return;
+            }
+            chat.addToolOutput({
+              tool: "task",
+              toolCallId: toolCall.toolCallId,
+              output: { summary: result.summary },
+            });
+          },
+        });
+        return;
+      }
+
       // AI SDK marks tools without static execute as `dynamic`. MCP tools are dynamic but must
       // still run on the CLI — only skip unrelated dynamic tools we do not own.
       if (toolCall.dynamic && !isMcpCall) return;
 
-      if (isMcpCall) {
-        // dynamicTool MCP entries are not in ChatTools union — widen addToolOutput for MCP path.
-        const addMcpToolOutput = chat.addToolOutput as (params: {
-          toolCallId: string;
-          state?: "output-available" | "output-error";
-          output?: unknown;
-          errorText?: string;
-        }) => void;
+      const getHooksConfig = () => {
+        if (!hooksConfigRef.current) {
+          try {
+            hooksConfigRef.current = loadMergedHooksConfig(process.cwd());
+          } catch {
+            hooksConfigRef.current = { hooks: [] };
+          }
+        }
+        return hooksConfigRef.current;
+      };
 
-        await executeMcpToolCall(
-          {
-            toolName: toolCall.toolName,
+      const hooksConfig = getHooksConfig();
+
+      const makeHookPayload = (event: HookPayload["event"]): HookPayload => ({
+        toolName: toolCall.toolName,
+        input: toolCall.input,
+        sessionId,
+        mode,
+        cwd: process.cwd(),
+        event,
+      });
+
+      const addMcpToolOutput = chat.addToolOutput as (params: {
+        toolCallId: string;
+        state?: "output-available" | "output-error";
+        output?: unknown;
+        errorText?: string;
+      }) => void;
+
+      const emitToolError = (errorText: string) => {
+        if (shouldSkipToolOutput()) return;
+        if (isMcpCall) {
+          addMcpToolOutput({
             toolCallId: toolCall.toolCallId,
-            input: toolCall.input,
-          },
-          {
-            getMcpManager,
-            requestMcpApproval,
-            sessionMcpAllowRef: sessionMcpAllowRef.current,
-            mode,
-            dialog,
-            addToolOutput: (params) => {
-              if (shouldSkipToolOutput()) return;
-              if (params.state === "output-error") {
-                addMcpToolOutput({
-                  toolCallId: params.toolCallId,
-                  state: "output-error",
-                  errorText: params.errorText ?? "MCP tool call failed",
-                });
-                return;
-              }
-              addMcpToolOutput({
-                toolCallId: params.toolCallId,
-                output: params.output,
-              });
-            },
-          },
-        );
-        return;
-      }
-
-      try {
-        // ── Phase 01 bash approval gate (HARNESS-03) ────────────────────────────
-        if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
-          const { command } = toolInputSchemas.bash.parse(toolCall.input);
-          if (requiresApproval(command, sessionAllowRef.current)) {
-            const verdict = await requestBashApproval(dialog, command);
-            if (verdict === "reject") {
-              if (shouldSkipToolOutput()) return;
-              chat.addToolOutput({
-                tool: "bash",
-                toolCallId: toolCall.toolCallId,
-                state: "output-error",
-                errorText: BASH_REJECT_ERROR_TEXT,
-              });
-              return;
-            }
-            if (verdict === "allow-session") {
-              rememberSessionAllow(sessionAllowRef.current, command);
-            }
-          }
+            state: "output-error",
+            errorText,
+          });
+          return;
         }
-
-        if (
-          requiresLocalWriteApproval(
-            toolCall.toolName,
-            mode,
-            sessionWriteAllowRef.current,
-          )
-        ) {
-          const verdict = await requestLocalWriteApproval(
-            dialog,
-            toolCall.toolName,
-            toolCall.input,
-          );
-          if (verdict === "reject") {
-            if (shouldSkipToolOutput()) return;
-            chat.addToolOutput({
-              tool: toolCall.toolName as keyof ChatTools,
-              toolCallId: toolCall.toolCallId,
-              state: "output-error",
-              errorText: LOCAL_WRITE_REJECT_ERROR_TEXT,
-            });
-            return;
-          }
-          if (verdict === "allow-session") {
-            sessionWriteAllowRef.current.add(toolCall.toolName);
-          }
-        }
-        const output = await executeLocalTool(toolCall.toolName, toolCall.input, mode);
-        if (shouldSkipToolOutput()) return;
-        chat.addToolOutput({
-          tool: toolCall.toolName as keyof ChatTools,
-          toolCallId: toolCall.toolCallId,
-          output,
-        });
-      } catch (error) {
-        if (shouldSkipToolOutput()) return;
         chat.addToolOutput({
           tool: toolCall.toolName as keyof ChatTools,
           toolCallId: toolCall.toolCallId,
           state: "output-error",
-          errorText: error instanceof Error ? error.message : String(error),
+          errorText,
         });
+      };
+
+      try {
+        const pipelineResult = await runToolPipeline({
+          toolCall: {
+            toolName: toolCall.toolName,
+            toolCallId: toolCall.toolCallId,
+            input: toolCall.input,
+          },
+          beforeHook: async () => {
+            const hookResult = await runMatchingHooks(
+              "beforeToolCall",
+              toolCall.toolName,
+              makeHookPayload("beforeToolCall"),
+              hooksConfig.hooks,
+            );
+            if (hookResult && !hookResult.allowed) {
+              return {
+                allowed: false,
+                reason: hookResult.reason,
+                hookId: hookResult.hookId,
+                hookTimedOut: hookResult.timedOut,
+              };
+            }
+            return { allowed: true };
+          },
+          approvalGate: async () => {
+            if (isMcpCall) {
+              return { approved: true };
+            }
+
+            if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
+              const { command } = toolInputSchemas.bash.parse(toolCall.input);
+              if (requiresApproval(command, sessionAllowRef.current)) {
+                const verdict = await requestBashApproval(dialog, command);
+                if (verdict === "reject") {
+                  return { approved: false, reason: BASH_REJECT_ERROR_TEXT };
+                }
+                if (verdict === "allow-session") {
+                  rememberSessionAllow(sessionAllowRef.current, command);
+                }
+              }
+            }
+
+            if (
+              requiresLocalWriteApproval(
+                toolCall.toolName,
+                mode,
+                sessionWriteAllowRef.current,
+              )
+            ) {
+              const verdict = await requestLocalWriteApproval(
+                dialog,
+                toolCall.toolName,
+                toolCall.input,
+              );
+              if (verdict === "reject") {
+                return { approved: false, reason: LOCAL_WRITE_REJECT_ERROR_TEXT };
+              }
+              if (verdict === "allow-session") {
+                sessionWriteAllowRef.current.add(toolCall.toolName);
+              }
+            }
+
+            return { approved: true };
+          },
+          executeTool: async () => {
+            if (isMcpCall) {
+              await executeMcpToolCall(
+                {
+                  toolName: toolCall.toolName,
+                  toolCallId: toolCall.toolCallId,
+                  input: toolCall.input,
+                },
+                {
+                  getMcpManager,
+                  requestMcpApproval,
+                  sessionMcpAllowRef: sessionMcpAllowRef.current,
+                  mode,
+                  dialog,
+                  addToolOutput: (params) => {
+                    if (shouldSkipToolOutput()) return;
+                    if (params.state === "output-error") {
+                      addMcpToolOutput({
+                        toolCallId: params.toolCallId,
+                        state: "output-error",
+                        errorText: params.errorText ?? "MCP tool call failed",
+                      });
+                      return;
+                    }
+                    addMcpToolOutput({
+                      toolCallId: params.toolCallId,
+                      output: params.output,
+                    });
+                  },
+                },
+              );
+              return;
+            }
+
+            const output = await executeLocalTool(toolCall.toolName, toolCall.input, mode);
+            if (shouldSkipToolOutput()) return;
+            chat.addToolOutput({
+              tool: toolCall.toolName as keyof ChatTools,
+              toolCallId: toolCall.toolCallId,
+              output,
+            });
+          },
+          afterHook: async () => {
+            await runMatchingHooks(
+              "afterToolCall",
+              toolCall.toolName,
+              makeHookPayload("afterToolCall"),
+              hooksConfig.hooks,
+            );
+          },
+        });
+
+        if (pipelineResult.blocked) {
+          const errorText = pipelineResult.reason ?? "Tool execution blocked";
+          emitToolError(errorText);
+          if (pipelineResult.blockedBy === "hook") {
+            toast.show({
+              variant: "error",
+              message: formatHookBlockToast(toolCall.toolName, {
+                reason: errorText,
+                hookId: pipelineResult.hookId,
+                hookTimedOut: pipelineResult.hookTimedOut,
+              }),
+            });
+          }
+        }
+      } catch (error) {
+        emitToolError(error instanceof Error ? error.message : String(error));
       }
     },
     sendAutomaticallyWhen: (params) => {
@@ -407,6 +614,8 @@ export function useChat(
   }, [turnInterrupted, chat.messages, chat.setMessages]);
 
   const interrupt = useCallback(() => {
+    subagentAbortRef.current?.abort();
+    setActiveSlashMessages(null);
     turnInterruptedRef.current = true;
     setTurnInterrupted(true);
     killTrackedToolProcesses();
@@ -479,26 +688,106 @@ export function useChat(
     chat.setMessages(pruned);
   }, [chat.messages, chat.setMessages]);
 
+  const runSlashSubagent = useCallback(
+    async (params: {
+      type: SubagentType;
+      prompt: string;
+      slashLine: string;
+      mode: ModeType;
+      model: SupportedChatModelId;
+    }) => {
+      const taskInput = {
+        subagent_type: params.type,
+        prompt: params.prompt,
+        description: params.prompt,
+      };
+      const { user, assistant, toolCallId } = buildSlashSubagentPair({
+        type: params.type,
+        prompt: params.prompt,
+        slashLine: params.slashLine,
+        mode: params.mode,
+        model: params.model,
+      });
+
+      setActiveSlashMessages([user as Message, assistant as Message]);
+      setSubagentRunning(true);
+      setSubagentType(params.type);
+      await waitForUiPaint();
+
+      const result = await runTaskSubagent({
+        input: taskInput,
+        mode: params.mode,
+        model: params.model,
+      });
+
+      const finalizedAssistant = finalizeSlashSubagentAssistant(
+        assistant,
+        toolCallId,
+        taskInput,
+        result,
+      ) as Message;
+
+      chat.setMessages((messages) => [...messages, user as Message, finalizedAssistant]);
+      setActiveSlashMessages(null);
+    },
+    [chat.setMessages, runTaskSubagent],
+  );
+
+  const displayMessages = useMemo(() => {
+    if (!activeSlashMessages) return chat.messages;
+    return [...chat.messages, ...activeSlashMessages];
+  }, [activeSlashMessages, chat.messages]);
+
   const submit = useCallback(
     (params: { userText: string; mode: ModeType; model: SupportedChatModelId }) => {
       turnInterruptedRef.current = false;
       setTurnInterrupted(false);
       skipToolOutputIdsRef.current.clear();
+
+      const trimmed = params.userText.trim();
+      const exploreMatch = /^\/explore(?:\s+(.*))?$/s.exec(trimmed);
+      const planResearchMatch = /^\/plan-research(?:\s+(.*))?$/s.exec(trimmed);
+      const slashMatch = exploreMatch ?? planResearchMatch;
+
+      if (slashMatch) {
+        const prompt = (slashMatch[1] ?? "").trim();
+        if (!prompt) {
+          toast.show({
+            variant: "error",
+            message: "Provide a prompt after the slash command",
+          });
+          return Promise.resolve();
+        }
+
+        const type: SubagentType = exploreMatch ? "explore" : "plan-research";
+        return runSlashSubagent({
+          type,
+          prompt,
+          slashLine: trimmed,
+          mode: params.mode,
+          model: params.model,
+        });
+      }
+
+      const skills = resolveLoadedSkills();
+      const userText = expandSkillSlashMessage({ text: params.userText, skills });
       return chat.sendMessage({
-        text: params.userText,
+        text: userText,
         metadata: {
           mode: params.mode,
           model: params.model,
         },
       });
     },
-    [chat.sendMessage],
+    [chat.sendMessage, runSlashSubagent, toast.show],
   );
 
   return {
-    messages: chat.messages,
+    messages: displayMessages,
     status: chat.status,
     turnInterrupted,
+    subagentRunning,
+    subagentType,
     error: chat.error
       ? new Error(formatChatStreamError(chat.error))
       : undefined,

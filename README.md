@@ -26,6 +26,13 @@ MoCode is a Bun monorepo that pairs a rich **TUI client** with a **Hono API serv
 
 ---
 
+## Quality Contract (Phase 4)
+
+- **Guaranteed**: local tool execution with path sandboxing, approval/hook enforcement, subagent context isolation (summary-only), Esc interruption, and session recovery.
+- **Best effort**: `/explore` and subagent summary quality depends on model behavior; the SaaS path may use fallback summaries under weak-model outputs (while still returning verifiable evidence, such as directory-scan results).
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -163,8 +170,11 @@ See [`.env.example`](./.env.example) for the full list and inline comments.
 | `/new` | Start a new conversation |
 | `/agents` | Switch between **Build** and **Plan** modes |
 | `/models` | Select an AI model |
+| `/keys` | Configure BYOK provider API keys (`mocode --local`) |
 | `/sessions` | Browse and resume past sessions |
 | `/resume` | **Regenerate** from the last user message (after Esc on a partial assistant) |
+| `/explore` | Delegate codebase exploration to a read-only **explore** subagent |
+| `/plan-research` | Delegate architecture research to a read-only **plan-research** subagent |
 | `/theme` | Change the color theme |
 | `/login` | Sign in via browser (Clerk OAuth) |
 | `/logout` | Sign out locally |
@@ -194,6 +204,7 @@ Storage: **SaaS** → PostgreSQL; **`mocode --local`** → `~/.mocode/sessions/`
 | Esc during streaming text | Partial assistant text **kept** in transcript; survives session reopen |
 | Esc before first visible token | **Restores composer** text; strips empty assistant placeholder |
 | Esc while tool (bash/MCP) runs | Tool line shows **`Interrupted by user`**; generation **stops immediately** (local subprocess killed) |
+| Esc while **Task subagent** runs | Subagent aborts; Task summary shows **`Interrupted by user`**; footer spinner stops |
 | Reopen session, last message is **user** only | Generation **starts automatically** (no `/resume`) |
 | Reopen session, last message is **partial assistant** | Does **not** auto-resume; run **`/resume`** manually |
 | `/resume` on partial assistant | **Regenerates** a full new reply from the last user turn (not append-in-place) |
@@ -217,11 +228,22 @@ Implementation details: [`doc/harness-phase-03-stream-reliability-notes.md`](./d
 | `gpt-5.4-mini` | OpenAI |
 | `gpt-5.4-nano` | OpenAI |
 | `gemini-2.5-flash` | Google |
-| `llama-3.3-70b-versatile` | Groq |
-| `gpt-oss-120b` | Cerebras |
+| `gemini-2.5-flash-lite` | Google (free; tight quota; weak tool calling) |
+| `llama-3.3-70b-versatile` | Groq (free; weak tool calling) |
+| `openai/gpt-oss-20b` | Groq (free) |
+| `openai/gpt-oss-120b` | Groq (free) |
+| `gpt-oss-120b` | Cerebras (default for BYOK; free recommended) |
 | `openai/gpt-oss-120b:free` | OpenRouter |
 
 The canonical list lives in `packages/shared/src/models.ts`.
+
+### BYOK (`mocode --local`)
+
+- **Default model:** `gpt-oss-120b` (Cerebras). Set provider keys with **`/keys`** → `~/.mocode/keys.json` (local only; never sent to the MoCode server).
+- **`/models` hints:** *Free recommended* / *Free OK* / *Weak tool calling* — avoid weak-tool models for `/explore` and other multi-tool turns.
+- **Free-tier picks:** Cerebras `gpt-oss-120b` or Groq `openai/gpt-oss-120b`. Groq Llama ids often malform tool calls in subagent loops.
+
+Smoke-test server `.env` keys: `bun run packages/server/scripts/test-providers.ts`
 
 ---
 
@@ -235,11 +257,67 @@ Tools are defined in `@mocode/shared` and executed on the CLI.
 | `listDirectory` | ✓ | ✓ | List directory entries |
 | `glob` | ✓ | ✓ | Find files by glob pattern |
 | `grep` | ✓ | ✓ | Search file contents with regex |
+| `gitStatus` | ✓ | ✓ | Git branch and working-tree summary |
+| `gitDiff` | ✓ | ✓ | Git diff (unstaged, staged, or vs ref) |
+| `task` | ✓ | ✓ | Delegate to a builtin subagent (`explore`, `plan-research`) |
 | `writeFile` | | ✓ | Create or overwrite a file |
 | `editFile` | | ✓ | Replace exact text in a file |
 | `bash` | | ✓ | Run a shell command |
 
 All paths are resolved relative to `process.cwd()` and cannot escape the project directory.
+
+---
+
+## Subagents, skills & hooks
+
+Phase 4 harness capabilities (HARNESS-09–11). CLI-side tool execution runs locally; the Task subagent may still stream through SaaS when applicable.
+
+### Task tool & subagents (HARNESS-09)
+
+The main agent (or you via slash) can invoke **`task`** with `subagent_type` **`explore`** or **`plan-research`**, plus a `prompt` and optional `description` for the transcript.
+
+| Builtin | Tools | Purpose |
+|---------|-------|---------|
+| `explore` | Read-only local + read-only MCP | Fast codebase scan |
+| `plan-research` | Read-only local only | Architecture / tradeoff research |
+
+**Behavior:**
+
+- **Summary-only** — the parent sees a Task tool row and final summary text, not the subagent’s inner tool loop (D-21).
+- **Synchronous blocking** — the parent waits; the footer shows `{subagent_type} · esc to interrupt` while running (D-04).
+- **Esc interrupt** — aborts the subagent and surfaces `Interrupted by user` on the Task output (D-10).
+- **No nesting** — subagents cannot spawn Task in v1 (D-05).
+
+Slash shortcuts **`/explore`** and **`/plan-research`** use the same transcript path as model-initiated Task (e.g. `/explore src/lib`). Trailing text after the command becomes the subagent prompt.
+
+Long summaries cap at **8 lines** in the transcript with a click-to-expand affordance.
+
+### Skills (HARNESS-10)
+
+Cursor-compatible **`SKILL.md`** directories under:
+
+- `~/.mocode/skills/` (global)
+- `.mocode/skills/` (project — overrides same skill name)
+
+Each valid skill registers a **dynamic slash command** `/skill-name` at app startup (before the session opens). Invoking `/my-skill fix the bug` expands the skill body plus trailing args as the user message. **Built-in slash commands win** on name collision; conflicting skills are skipped with a startup toast.
+
+Skills inherit the current **Plan/Build** mode and existing write/bash approval gates.
+
+### Hooks (HARNESS-11)
+
+Tool lifecycle hooks in **`hooks.json`**:
+
+- `~/.mocode/hooks.json` (global)
+- `.mocode/hooks.json` (project — same `id` overrides global)
+
+Each entry: `id`, `event` (`beforeToolCall` | `afterToolCall`), `toolName` glob matcher (e.g. `bash`, `mcp__*`), `command` shell argv array, optional `timeoutMs` (default 30s).
+
+**Pipeline order:** `beforeToolCall` hooks → bash/MCP/write **approval** → execute → `afterToolCall` hooks (D-40).
+
+- **`beforeToolCall`** — non-zero exit, timeout, or JSON deny **blocks** the tool; error toast + tool `output-error` in transcript (D-38).
+- **`afterToolCall`** — observability only; cannot block after execution (D-39).
+
+Hook stdin payload: JSON `{ toolName, input, sessionId, mode, cwd, event }`.
 
 ---
 
