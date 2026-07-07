@@ -33,7 +33,7 @@ const FREE_MODELS = [
         envKey: "GROQ_API_KEY",
     },
     {
-        modelId: "llama-3.1-8b-instant",
+        modelId: "openai/gpt-oss-20b",
         envKey: "GROQ_API_KEY",
     },
     {

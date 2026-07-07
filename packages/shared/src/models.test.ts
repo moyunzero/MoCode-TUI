@@ -14,13 +14,13 @@ describe("model catalog hints", () => {
 
   test("marks free-tier tool-calling guidance", () => {
     expect(getModelCatalogHint("gpt-oss-120b")).toBe("free-recommended");
-    expect(getModelCatalogHint("llama-3.1-8b-instant")).toBe("weak-tools");
+    expect(getModelCatalogHint("openai/gpt-oss-20b")).toBe("free-ok");
     expect(formatModelCatalogHint("weak-tools")).toBe("工具调用不稳定");
   });
 
   test("sortModelsForCatalogPicker puts recommended first and weak tools last", () => {
     const ids: SupportedChatModelId[] = [
-      "llama-3.1-8b-instant",
+      "llama-3.3-70b-versatile",
       "gpt-oss-120b",
       "claude-sonnet-4-6",
       "gemini-2.5-flash",
@@ -29,7 +29,7 @@ describe("model catalog hints", () => {
       "gpt-oss-120b",
       "gemini-2.5-flash",
       "claude-sonnet-4-6",
-      "llama-3.1-8b-instant",
+      "llama-3.3-70b-versatile",
     ]);
   });
 });

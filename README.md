@@ -230,7 +230,7 @@ Implementation details: [`doc/harness-phase-03-stream-reliability-notes.md`](./d
 | `gemini-2.5-flash` | Google |
 | `gemini-2.5-flash-lite` | Google (free; tight quota; weak tool calling) |
 | `llama-3.3-70b-versatile` | Groq (free; weak tool calling) |
-| `llama-3.1-8b-instant` | Groq (free; weak tool calling) |
+| `openai/gpt-oss-20b` | Groq (free) |
 | `openai/gpt-oss-120b` | Groq (free) |
 | `gpt-oss-120b` | Cerebras (default for BYOK; free recommended) |
 | `openai/gpt-oss-120b:free` | OpenRouter |

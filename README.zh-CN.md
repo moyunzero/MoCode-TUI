@@ -230,7 +230,7 @@ macOS Terminal.app 可运行 `mocode --terminal-setup` 一次，启用 Option-as
 | `gemini-2.5-flash` | Google |
 | `gemini-2.5-flash-lite` | Google（免费；配额紧；工具调用不稳定） |
 | `llama-3.3-70b-versatile` | Groq（免费；工具调用不稳定） |
-| `llama-3.1-8b-instant` | Groq（免费；工具调用不稳定） |
+| `openai/gpt-oss-20b` | Groq（免费） |
 | `openai/gpt-oss-120b` | Groq（免费） |
 | `gpt-oss-120b` | Cerebras（BYOK 默认；免费推荐） |
 | `openai/gpt-oss-120b:free` | OpenRouter |

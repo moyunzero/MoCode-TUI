@@ -99,7 +99,7 @@ export type ModelPricing = {
       },
     },
     {
-      id: "llama-3.1-8b-instant",
+      id: "openai/gpt-oss-20b",
       provider: "groq",
       pricing: {
         inputUsdPerMillionTokens: 0,
@@ -156,9 +156,9 @@ export type ModelPricing = {
   const MODEL_CATALOG_HINTS: Partial<Record<SupportedChatModelId, ModelCatalogHint>> = {
     "gpt-oss-120b": "free-recommended",
     "openai/gpt-oss-120b": "free-ok",
+    "openai/gpt-oss-20b": "free-ok",
     "gemini-2.5-flash": "free-ok",
     "llama-3.3-70b-versatile": "weak-tools",
-    "llama-3.1-8b-instant": "weak-tools",
     "gemini-2.5-flash-lite": "weak-tools",
     "openai/gpt-oss-120b:free": "weak-tools",
   };

@@ -1,3 +1,4 @@
+import { TextAttributes } from "@opentui/core";
 import { useCallback, useMemo } from "react";
 import {
   formatModelCatalogHint,
@@ -48,26 +49,31 @@ export const ModelsDialogContent = ({
       }}
       renderItem={(modelId, isSelected) => {
         const hint = getModelCatalogHint(modelId);
-        const hintColor =
+        const onSelectionFg = colors.background;
+        const hintFg =
           hint === "free-recommended"
             ? isSelected
-              ? "black"
+              ? onSelectionFg
               : colors.success
             : hint === "weak-tools"
               ? isSelected
-                ? "black"
+                ? onSelectionFg
                 : colors.error
               : isSelected
-                ? "black"
-                : "gray";
+                ? onSelectionFg
+                : colors.dimSeparator;
 
         return (
           <box flexDirection="row" gap={1}>
-            <text selectable={false} fg={isSelected ? "black" : "white"}>
+            <text selectable={false} fg={isSelected ? onSelectionFg : undefined}>
               {modelId}
             </text>
             {hint ? (
-              <text selectable={false} fg={hintColor}>
+              <text
+                selectable={false}
+                fg={hintFg}
+                attributes={hint === "free-ok" && !isSelected ? TextAttributes.DIM : undefined}
+              >
                 {formatModelCatalogHint(hint)}
               </text>
             ) : null}

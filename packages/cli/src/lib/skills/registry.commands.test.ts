@@ -53,7 +53,9 @@ describe("getAllCommands", () => {
     mkdirSync(skillsRoot, { recursive: true });
     writeSkillMd(skillsRoot, "demo-skill", "Demo", "body");
 
-    const commands = getAllCommands(projectDir);
+    const commands = getAllCommands(projectDir, {
+      globalSkillsDir: join(projectDir, "no-global"),
+    });
     expect(commands[0]?.name).toBe("demo-skill");
   });
 

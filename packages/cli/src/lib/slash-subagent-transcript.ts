@@ -61,16 +61,15 @@ export function buildSlashSubagentPair(params: {
   };
 }
 
+const BLANK_SUBAGENT_SUMMARY = "Subagent finished without a text summary.";
+
 export function normalizeSubagentSummary(
   summary: string,
-  result: SlashSubagentRunResult,
+  _result: SlashSubagentRunResult,
 ): string {
-  if (result.error || result.interrupted) {
-    return summary.trim() || summary;
-  }
   const trimmed = summary.trim();
   if (trimmed.length > 0) return trimmed;
-  return "Subagent finished without a text summary.";
+  return BLANK_SUBAGENT_SUMMARY;
 }
 
 export function finalizeSlashSubagentAssistant(

@@ -144,9 +144,10 @@ function TaskToolBlock({
       ) : null}
       {summary != null ? (
         <box width="100%" gap={1}>
-          {visibleLines.map((line) => (
+          {visibleLines.map((line, index) => (
             <text
-              key={`${part.toolCallId}-summary-${line}`}
+              // biome-ignore lint/suspicious/noArrayIndexKey: static summary lines; index prevents duplicate-line collisions
+              key={`${part.toolCallId}-summary-${index}`}
               fg={isError ? colors.error : undefined}
             >
               {line}

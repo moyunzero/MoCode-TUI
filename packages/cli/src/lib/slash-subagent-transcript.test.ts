@@ -38,6 +38,27 @@ describe("normalizeSubagentSummary", () => {
       "Subagent finished without a text summary.",
     );
   });
+
+  test("returns fallback when error summary is blank", () => {
+    expect(normalizeSubagentSummary("  ", { summary: "  ", error: true })).toBe(
+      "Subagent finished without a text summary.",
+    );
+  });
+
+  test("returns fallback when interrupted summary is blank", () => {
+    expect(
+      normalizeSubagentSummary("  ", { summary: "  ", interrupted: true }),
+    ).toBe("Subagent finished without a text summary.");
+  });
+
+  test("preserves non-empty error summary", () => {
+    expect(
+      normalizeSubagentSummary("tool call validation failed", {
+        summary: "tool call validation failed",
+        error: true,
+      }),
+    ).toBe("tool call validation failed");
+  });
 });
 
 describe("finalizeSlashSubagentAssistant", () => {
