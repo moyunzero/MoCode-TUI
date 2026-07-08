@@ -15,6 +15,8 @@
  * Security: every path is resolved and checked against `process.cwd()` so the
  * agent cannot read or write outside the project tree.
  */
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import { mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { toolInputSchemas, Mode, type ModeType } from "@mocode/shared";
@@ -64,20 +66,69 @@ function truncate(value: string, limit: number) {
     : value;
 }
 
-/** Returns a line slice when line_start/line_end are set (1-based, inclusive). */
-function sliceFileLines(content: string, lineStart?: number, lineEnd?: number): string {
-  if (lineStart === undefined && lineEnd === undefined) {
-    return content;
+
+/** Streams only the requested line range — avoids loading entire large files. */
+async function readLinesFromFile(
+  resolved: string,
+  lineStart?: number,
+  lineEnd?: number,
+): Promise<string> {
+  const startLine = lineStart ?? 1;
+  const lines: string[] = [];
+  const rl = createInterface({
+    input: createReadStream(resolved, { encoding: "utf-8" }),
+    crlfDelay: Number.POSITIVE_INFINITY,
+  });
+
+  let lineNumber = 0;
+  for await (const line of rl) {
+    lineNumber += 1;
+    if (lineNumber < startLine) continue;
+    if (lineEnd !== undefined && lineNumber > lineEnd) break;
+    lines.push(line);
   }
 
-  const lines = content.split("\n");
-  const startIndex = Math.max(1, lineStart ?? 1) - 1;
-  const endIndex = lineEnd === undefined ? lines.length : Math.min(lineEnd, lines.length);
-  if (endIndex < startIndex + 1) {
-    return "";
+  return lines.join("\n");
+}
+
+/** Streams file content up to a character limit — avoids loading entire large files. */
+async function readFileUpToCharLimit(
+  resolved: string,
+  limit: number,
+): Promise<{ content: string; truncated: boolean }> {
+  const stream = createReadStream(resolved, { encoding: "utf-8" });
+  const chunks: string[] = [];
+  let length = 0;
+  let truncated = false;
+
+  for await (const chunk of stream) {
+    const text = String(chunk);
+    if (length + text.length <= limit) {
+      chunks.push(text);
+      length += text.length;
+      continue;
+    }
+
+    const remaining = limit - length;
+    if (remaining > 0) {
+      chunks.push(text.slice(0, remaining));
+      length += remaining;
+    }
+    truncated = true;
+    stream.destroy();
+    break;
   }
 
-  return lines.slice(startIndex, endIndex).join("\n");
+  return { content: chunks.join(""), truncated };
+}
+
+function applyCharLimit(
+  content: string,
+  limit: number,
+): { content: string; truncated?: boolean; totalLength?: number } {
+  return content.length > limit
+    ? { content: content.slice(0, limit), truncated: true, totalLength: content.length }
+    : { content };
 }
 
 /**
@@ -100,11 +151,21 @@ export async function executeLocalTool(toolName: string, input: unknown, mode: M
     case "readFile": {
       const { path, line_start, line_end } = toolInputSchemas.readFile.parse(input);
       const { resolved } = resolveInsideCwd(path);
-      const raw = await readFile(resolved, "utf-8");
-      const content = sliceFileLines(raw, line_start, line_end);
-      return content.length > MAX_FILE_SIZE
-        ? { content: content.slice(0, MAX_FILE_SIZE), truncated: true, totalLength: content.length }
-        : { content };
+
+      if (line_start !== undefined || line_end !== undefined) {
+        const content = await readLinesFromFile(resolved, line_start, line_end);
+        const limited = applyCharLimit(content, MAX_FILE_SIZE);
+        return limited.truncated
+          ? {
+              content: limited.content,
+              truncated: true,
+              totalLength: limited.totalLength,
+            }
+          : { content: limited.content };
+      }
+
+      const { content, truncated } = await readFileUpToCharLimit(resolved, MAX_FILE_SIZE);
+      return truncated ? { content, truncated: true } : { content };
     }
     case "listDirectory": {
       const { path } = toolInputSchemas.listDirectory.parse(input);

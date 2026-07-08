@@ -32,3 +32,8 @@ export {
   hasVisibleAssistantContent,
   type AssistantMessageLike,
 } from "./assistant-content";
+
+export {
+  buildSkillsSection,
+  type SkillPromptEntry,
+} from "./skills-prompt";

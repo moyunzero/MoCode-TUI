@@ -108,4 +108,20 @@ describe("readFile tool schema", () => {
       schema.safeParse({ path: "src/index.ts", line_start: 1, line_end: 40 }).success,
     ).toBe(true);
   });
+
+  test("accepts line_start without line_end", () => {
+    const schema = toolInputSchemas.readFile;
+    expect(schema.safeParse({ path: "src/index.ts", line_start: 10 }).success).toBe(true);
+  });
+
+  test("rejects line_start greater than line_end", () => {
+    const schema = toolInputSchemas.readFile;
+    const result = schema.safeParse({ path: "src/index.ts", line_start: 50, line_end: 10 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes("line_start"))).toBe(
+        true,
+      );
+    }
+  });
 });
