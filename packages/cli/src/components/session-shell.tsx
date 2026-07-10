@@ -3,7 +3,6 @@ import type { ReactNode, RefObject } from "react";
 import { InputBar } from "./input-bar";
 import { Spinner } from "./spinner";
 import { usePromptConfig } from "../providers/prompt-config";
-import { useTheme } from "../providers/theme";
 
 /** Session layout: scrollable transcript, input bar, and status footer. */
 type Props = {
@@ -37,7 +36,6 @@ export function SessionShell({
 
     // Footer spinner reads mode so its color matches the input border accent.
     const { mode } = usePromptConfig();
-    const { colors } = useTheme();
     return (
         <box 
             width="100%" 

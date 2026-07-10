@@ -23,21 +23,29 @@ export type ModeType = (typeof Mode)[keyof typeof Mode];
 
 /** Zod input schemas keyed by tool name; shared between server contracts and CLI validation. */
 export const toolInputSchemas = {
-  readFile: z.object({
-    path: z.string().describe("Relative path to the file to read"),
-    line_start: z
-      .number()
-      .int()
-      .min(1)
-      .optional()
-      .describe("Optional 1-based start line (inclusive) for partial reads"),
-    line_end: z
-      .number()
-      .int()
-      .min(1)
-      .optional()
-      .describe("Optional 1-based end line (inclusive) for partial reads"),
-  }),
+  readFile: z
+    .object({
+      path: z.string().describe("Relative path to the file to read"),
+      line_start: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Optional 1-based start line (inclusive) for partial reads"),
+      line_end: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Optional 1-based end line (inclusive) for partial reads"),
+    })
+    .refine(
+      (data) =>
+        data.line_start === undefined ||
+        data.line_end === undefined ||
+        data.line_start <= data.line_end,
+      { message: "line_start must be less than or equal to line_end", path: ["line_end"] },
+    ),
   listDirectory: z.object({
     path: z.string().default(".").describe("Relative directory path to list"),
   }),

@@ -6,12 +6,8 @@
  * - Code heuristics (`mcp/heuristics.ts`) gate execution and PLAN filtering
  * - Prompt rules here steer the model toward `mcp__*` when the user asks for MCP
  */
-import type { ModeType } from "@mocode/shared";
-
-export type SkillPromptEntry = {
-  name: string;
-  description: string;
-};
+import type { ModeType, SkillPromptEntry } from "@mocode/shared";
+import { buildSkillsSection } from "@mocode/shared";
 
 type SystemPromptParams = {
   mode: ModeType;
@@ -61,22 +57,6 @@ function buildMcpToolsSection(
   3. Filesystem MCP paths must be under the server's allowed directories
   4. Read-only MCP tools auto-execute; write tools need TUI approval in BUILD mode
   5. PLAN mode exposes read-only MCP tools only (${mode === "PLAN" ? "filtered" : "get/list/read/fetch/search prefixes"})`;
-}
-
-/** Lists discoverable skills for the main agent (D-29). */
-export function buildSkillsSection(skills: SkillPromptEntry[]): string {
-  if (skills.length === 0) {
-    return "";
-  }
-
-  const bullets = skills
-    .map((skill) => `- **${skill.name}** — ${skill.description}`)
-    .join("\n  ");
-
-  return `
-  # Available Skills
-  Invoke via slash command (e.g. /skill-name):
-  ${bullets}`;
 }
 
 /** Thinking steps reorder when MCP is live — route external tools before repo grep/glob. */

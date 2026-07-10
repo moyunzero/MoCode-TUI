@@ -83,4 +83,16 @@ describe("buildSystemPrompt", () => {
       expect(toolsSection!).not.toMatch(/\bbash\b/);
     });
   });
+
+  describe("skills section", () => {
+    test("includes shared skills prompt when skills provided", () => {
+      const prompt = buildSystemPrompt({
+        mode: "BUILD",
+        skills: [{ name: "write-tests", description: "Generate tests" }],
+      });
+
+      expect(prompt).toContain("Available Skills");
+      expect(prompt).toContain("write-tests");
+    });
+  });
 });

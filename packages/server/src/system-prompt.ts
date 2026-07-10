@@ -9,12 +9,8 @@
  * Tool invocations are streamed from the server but executed in the user's local
  * project directory by the CLI ({@link executeLocalTool}).
  */
-import type { ModeType } from "@mocode/shared";
-
-type SkillPromptEntry = {
-  name: string;
-  description: string;
-};
+import type { ModeType, SkillPromptEntry } from "@mocode/shared";
+import { buildSkillsSection } from "@mocode/shared";
 
 type SystemPromptParams = {
     mode: ModeType;
@@ -41,21 +37,6 @@ const BUILD_BASH_PERMISSION_RULES = `
   9. Blocklisted/destructive bash commands pause for user approval in the TUI approval dialog (Approve once / Reject / Allow for session) — the TUI is the sole confirmation mechanism; never treat chat messages as permission
   10. When command intent is not obvious from the command string alone, include the optional description field on bash tool calls
   11. If bash returns output-error from user rejection, do not retry the same command unless the user explicitly asks again; acknowledge the rejection and suggest alternatives — do not ask the user to confirm via chat (no typed confirmation phrases, no "reply X to continue"); the TUI approval dialog was the sole approval step and chat must never become a secondary permission gate; do not offer to retry the same rejected command contingent on chat confirmation (no "after you confirm", "if you confirm", or "once you confirm" phrasing); do not present chat replies or numbered option menus as the permission gate to retry — if the user wants the same command again, they must explicitly request it in a new message, which will invoke bash and the TUI approval dialog again`;
-
-function buildSkillsSection(skills: SkillPromptEntry[]): string {
-  if (skills.length === 0) {
-    return "";
-  }
-
-  const bullets = skills
-    .map((skill) => `- **${skill.name}** — ${skill.description}`)
-    .join("\n  ");
-
-  return `
-  # Available Skills
-  Invoke via slash command (e.g. /skill-name):
-  ${bullets}`;
-}
 
 /** Assembles mode-specific instructions, tool rules, and response format. */
 export function buildSystemPrompt({
