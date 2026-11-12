@@ -2,7 +2,10 @@
  * Chat HTTP routes: submit a user turn and stream the assistant reply via SSE.
  *
  * Phase 8 extends the stream with:
- * - Multi-step agent loop via `streamText({ tools, stopWhen: stepCountIs(50) })`
+ * - Exactly one model step per request: tools carry no executors here, so the
+ *   stream ends after the model asks for tools. The CLI runs them and re-posts;
+ *   the loop budget (turns, tool caps, repeat guard) lives in
+ *   `packages/cli/src/lib/agent-loop.ts`.
  * - Reasoning, tool-call, and tool-result SSE events (mirrored in Message.parts)
  * - System prompt and cwd-scoped tools when session.cwd is set
  *
@@ -63,12 +66,15 @@ import {
 } from "../lib/stream-interrupt";
 import { shouldPersistOnFinish } from "../lib/chat-abort";
 import { resolveSubagentChatFinish } from "../lib/chat-subagent";
+import { DEFAULT_COMPACTION_POLICY, compactMessages } from "@mocode/shared";
 
 type ChatMessageMetadata = {
   mode?: ModeType;
   model?: string;
   durationMs?: number;
   usage?: LanguageModelUsage;
+  /** Present when old turns were folded to stay inside the context budget. */
+  compaction?: { tokensBefore: number; tokensAfter: number };
 };
 
 type MocodeUIMessage = UIMessage<ChatMessageMetadata, never, InferUITools<ToolContracts>>;
@@ -179,7 +185,10 @@ const app = new Hono<AuthenticatedEnv>()
         messages: stripIncompleteAssistantMessages(mergedMessages),
         tools,
       });
-      const modelMessages = await convertToModelMessages(nextMessages, { tools });
+      // Compaction shapes only the *model input*. The client's message list stays
+      // intact and is still what gets persisted and echoed back.
+      const compaction = compactMessages(nextMessages, DEFAULT_COMPACTION_POLICY);
+      const modelMessages = await convertToModelMessages(compaction.messages, { tools });
       let completedUsage: LanguageModelUsage | null = null;
       const replayBuffer = new StreamReplayBuffer();
 
@@ -208,6 +217,14 @@ const app = new Hono<AuthenticatedEnv>()
             model,
             durationMs: Date.now() - startTime,
             ...(completedUsage ? { usage: completedUsage } : {}),
+            ...(compaction.compacted
+              ? {
+                  compaction: {
+                    tokensBefore: compaction.tokensBefore,
+                    tokensAfter: compaction.tokensAfter,
+                  },
+                }
+              : {}),
           };
         },
         consumeSseStream: ({ stream }) => {
