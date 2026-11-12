@@ -8,7 +8,8 @@ import type { KeyBinding } from "@opentui/core";
 import { useNavigate } from "react-router";
 import { EmptyBorder } from "./border";
 import { StatusBar } from "./status-bar";
-import { CommandMenu } from "./command-menu";
+import type { AgentProgress } from "../lib/agent-loop";
+import type { AgentPhase } from "../lib/agent-phase";import { CommandMenu } from "./command-menu";
 import type { Command } from "./command-menu/types";
 import { useCommandMenu } from "./command-menu/use-command-menu";
 import { useToast } from "../providers/toast";
@@ -264,6 +265,12 @@ type Props = {
   composerRestoreToken?: number;
   subagentRunning?: boolean;
   subagentType?: string | null;
+  /** Loop budget shown in the status line; see `lib/agent-loop.ts`. */
+  agentProgress?: AgentProgress | null;
+  /** Set when a fallback model answered. */
+  agentDowngrade?: { from: string; to: string } | null;
+  agentPhase?: AgentPhase | null;
+  agentElapsedMs?: number | null;
 };
 
 export const TEXTAREA_KEY_BINDINGS: KeyBinding[] = [
@@ -280,6 +287,10 @@ export function InputBar({
   composerRestoreToken = 0,
   subagentRunning = false,
   subagentType = null,
+  agentProgress = null,
+  agentDowngrade = null,
+  agentPhase = null,
+  agentElapsedMs = null,
 }: Props) {
   const { mode, model, toggleMode, setMode, setModel } = usePromptConfig();
   const textareaRef = useRef<TextareaRenderable>(null);
@@ -643,7 +654,14 @@ export function InputBar({
             onContentChange={handleTextareaContentChange}
             placeholder={`Ask anything... "Fix a bug in the database"`}
           />
-          <StatusBar subagentRunning={subagentRunning} subagentType={subagentType} />
+          <StatusBar
+            subagentRunning={subagentRunning}
+            subagentType={subagentType}
+            agentProgress={agentProgress}
+            agentDowngrade={agentDowngrade}
+            agentPhase={agentPhase}
+            agentElapsedMs={agentElapsedMs}
+          />
         </box>
       </box>
     </box>

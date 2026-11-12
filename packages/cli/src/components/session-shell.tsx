@@ -3,6 +3,8 @@ import type { ReactNode, RefObject } from "react";
 import { InputBar } from "./input-bar";
 import { Spinner } from "./spinner";
 import { usePromptConfig } from "../providers/prompt-config";
+import type { AgentProgress } from "../lib/agent-loop";
+import type { AgentPhase } from "../lib/agent-phase";
 
 /** Session layout: scrollable transcript, input bar, and status footer. */
 type Props = {
@@ -16,6 +18,12 @@ type Props = {
     /** While a Task subagent runs — shows type in footer (D-21). */
     subagentRunning?: boolean;
     subagentType?: string | null;
+    /** Loop budget shown in the status line; see `lib/agent-loop.ts`. */
+    agentProgress?: AgentProgress | null;
+    /** Set when a fallback model answered. */
+    agentDowngrade?: { from: string; to: string } | null;
+    agentPhase?: AgentPhase | null;
+    agentElapsedMs?: number | null;
     composerRestoreText?: string | null;
     composerRestoreToken?: number;
     transcriptScrollRef?: RefObject<ScrollBoxRenderable | null>;
@@ -29,6 +37,10 @@ export function SessionShell({
     interruptible = false,
     subagentRunning = false,
     subagentType = null,
+    agentProgress = null,
+    agentDowngrade = null,
+    agentPhase = null,
+    agentElapsedMs = null,
     composerRestoreText = null,
     composerRestoreToken = 0,
     transcriptScrollRef,
@@ -60,7 +72,7 @@ export function SessionShell({
                 </box>
             </scrollbox>
             <box flexShrink={0}>
-                <InputBar onSubmit={onSubmit} disabled={inputDisabled} composerRestoreText={composerRestoreText} composerRestoreToken={composerRestoreToken} subagentRunning={subagentRunning} subagentType={subagentType} />
+                <InputBar onSubmit={onSubmit} disabled={inputDisabled} composerRestoreText={composerRestoreText} composerRestoreToken={composerRestoreToken} subagentRunning={subagentRunning} subagentType={subagentType} agentProgress={agentProgress} agentDowngrade={agentDowngrade} agentPhase={agentPhase} agentElapsedMs={agentElapsedMs} />
             </box>
             <box
                 flexShrink={0}

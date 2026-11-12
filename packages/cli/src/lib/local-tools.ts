@@ -18,11 +18,16 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { dirname, join, relative, resolve } from "path";
 import { toolInputSchemas, Mode, type ModeType } from "@mocode/shared";
 import { simpleGit } from "simple-git";
 import { runRipgrep } from "./ripgrep";
 import { trackToolProcess } from "./tool-process-registry";
+import { resolveInsideCwd as resolveSafePath } from "./sandbox-path";
+import { ToolPermissionError, buildSandboxEnv, findHardDeny } from "./permission-rules";
+import { recordAudit, summarizeInput } from "./audit-log";
+import { isShellConfined, sandboxBackend } from "./sandbox-capability";
+import { parsePathList, runtimePaths, spawnPlan } from "./sandbox-profile";
 
 /** Max chars returned from readFile before truncation metadata is attached. */
 const MAX_FILE_SIZE = 10_000;
@@ -45,18 +50,23 @@ const READ_ONLY_TOOLS = [
 
 /**
  * Resolve `path` relative to `process.cwd()` and reject escapes outside it.
+ *
+ * Containment is checked twice — lexically and against real paths — so a symlink
+ * inside the project cannot point at `/etc`. See `sandbox-path.ts`.
+ *
  * @throws when the resolved absolute path leaves the project directory.
  */
 function resolveInsideCwd(path: string) {
   const cwd = process.cwd();
-  const resolved = resolve(cwd, path);
-  const rel = relative(cwd, resolved);
 
-  if (rel.startsWith("..") || isAbsolute(rel)) {
-    throw new Error("Path is outside the project directory");
+  try {
+    return { cwd, resolved: resolveSafePath(cwd, path) };
+  } catch (error) {
+    throw new ToolPermissionError(
+      "PATH_ESCAPE",
+      error instanceof Error ? error.message : "Path is outside the project directory",
+    );
   }
-
-  return { cwd, resolved };
 }
 
 /** Append a truncation notice when shell output exceeds {@link MAX_OUTPUT}. */
@@ -67,12 +77,19 @@ function truncate(value: string, limit: number) {
 }
 
 
-/** Streams only the requested line range — avoids loading entire large files. */
+/**
+ * Streams only the requested line range.
+ *
+ * Keeps at most `limit` characters of output while still counting the full
+ * selected range length, so truncation metadata stays accurate without holding
+ * the entire selection in memory.
+ */
 async function readLinesFromFile(
   resolved: string,
   lineStart?: number,
   lineEnd?: number,
-): Promise<string> {
+  limit: number = MAX_FILE_SIZE,
+): Promise<{ content: string; truncated?: boolean; totalLength?: number }> {
   const startLine = lineStart ?? 1;
   const lines: string[] = [];
   const rl = createInterface({
@@ -81,14 +98,40 @@ async function readLinesFromFile(
   });
 
   let lineNumber = 0;
+  let selectedLength = 0;
+  let keptLength = 0;
+  let truncated = false;
+  // Length is not a proxy for "a line has been selected": the first selected line
+  // may be empty, and then the *second* line would not count its separator.
+  let hasSelected = false;
+  let hasKept = false;
+
   for await (const line of rl) {
     lineNumber += 1;
     if (lineNumber < startLine) continue;
     if (lineEnd !== undefined && lineNumber > lineEnd) break;
-    lines.push(line);
+
+    selectedLength += (hasSelected ? 1 : 0) + line.length;
+    hasSelected = true;
+
+    if (truncated) continue;
+
+    const nextKept = keptLength + (hasKept ? 1 : 0) + line.length;
+    if (nextKept <= limit) {
+      lines.push(line);
+      keptLength = nextKept;
+      hasKept = true;
+      continue;
+    }
+
+    const remaining = limit - keptLength - (hasKept ? 1 : 0);
+    if (remaining > 0) lines.push(line.slice(0, remaining));
+    keptLength = limit;
+    truncated = true;
   }
 
-  return lines.join("\n");
+  const content = lines.join("\n");
+  return truncated ? { content, truncated: true, totalLength: selectedLength } : { content };
 }
 
 /** Streams file content up to a character limit — avoids loading entire large files. */
@@ -122,15 +165,6 @@ async function readFileUpToCharLimit(
   return { content: chunks.join(""), truncated };
 }
 
-function applyCharLimit(
-  content: string,
-  limit: number,
-): { content: string; truncated?: boolean; totalLength?: number } {
-  return content.length > limit
-    ? { content: content.slice(0, limit), truncated: true, totalLength: content.length }
-    : { content };
-}
-
 /**
  * Dispatch a single tool call to the matching local handler.
  *
@@ -139,12 +173,12 @@ function applyCharLimit(
  * @param mode - Session mode; PLAN rejects write/bash tools as a second guard
  *   (the server already omits them from `getToolContracts(PLAN)`).
  */
-export async function executeLocalTool(toolName: string, input: unknown, mode: ModeType) {
+async function runTool(toolName: string, input: unknown, mode: ModeType) {
   if (
     mode === Mode.PLAN &&
     !READ_ONLY_TOOLS.includes(toolName as (typeof READ_ONLY_TOOLS)[number])
   ) {
-    throw new Error(`Tool ${toolName} is not available in PLAN mode`);
+    throw new ToolPermissionError("MODE_DENIED", `Tool ${toolName} is not available in PLAN mode`);
   }
 
   switch (toolName) {
@@ -153,15 +187,7 @@ export async function executeLocalTool(toolName: string, input: unknown, mode: M
       const { resolved } = resolveInsideCwd(path);
 
       if (line_start !== undefined || line_end !== undefined) {
-        const content = await readLinesFromFile(resolved, line_start, line_end);
-        const limited = applyCharLimit(content, MAX_FILE_SIZE);
-        return limited.truncated
-          ? {
-              content: limited.content,
-              truncated: true,
-              totalLength: limited.totalLength,
-            }
-          : { content: limited.content };
+        return readLinesFromFile(resolved, line_start, line_end, MAX_FILE_SIZE);
       }
 
       const { content, truncated } = await readFileUpToCharLimit(resolved, MAX_FILE_SIZE);
@@ -276,22 +302,86 @@ export async function executeLocalTool(toolName: string, input: unknown, mode: M
       return { success: true as const, path: relative(cwd, resolved) };
     }
     case "bash": {
-      // Runs in the sandboxed project cwd; TERM=dumb avoids escape-sequence noise in the TUI.
+      // Hard denies are refused even when the user approved the command: approval
+      // covers destructive-but-legitimate work, not host-destroying commands.
       const { command, timeout = DEFAULT_TIMEOUT } = toolInputSchemas.bash.parse(input);
-      const proc = Bun.spawn(["bash", "-c", command], {
-        cwd: resolveInsideCwd(".").resolved,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, TERM: "dumb" },
+      const hardDeny = findHardDeny(command);
+      if (hardDeny) {
+        throw new ToolPermissionError(
+          "HARD_DENY",
+          `Command refused (${hardDeny.id}): ${hardDeny.reason}. This cannot be approved.`,
+        );
+      }
+
+      // Runs in the project cwd with an allowlisted env; TERM=dumb avoids escape
+      // sequences leaking into the TUI. API keys are deliberately absent.
+      //
+      // A shell cannot be contained by path checks, so the spawn is wrapped in the
+      // host's OS sandbox when one is actually available. When it is not, the run
+      // is unconfined and the approval policy requires a human for every command.
+      const cwd = resolveInsideCwd(".").resolved;
+      const plan = spawnPlan(sandboxBackend(), command, {
+        cwd,
+        home: process.env.HOME,
+        tmpDir: process.env.TMPDIR,
+        runtimePaths: runtimePaths(),
+        extraReadPaths: parsePathList(process.env.MOCODE_SANDBOX_EXTRA_READ),
+        extraWritePaths: parsePathList(process.env.MOCODE_SANDBOX_EXTRA_WRITE),
       });
+
+      // Under bwrap the host TMPDIR is a read-only bind; the plan mounts a private
+      // tmpfs at /tmp, so point the child there.
+      const childEnv =
+        plan.backend === "bwrap" ? { ...buildSandboxEnv(), TMPDIR: "/tmp", TMP: "/tmp" } : buildSandboxEnv();
+
+      const proc = (() => {
+        try {
+          return Bun.spawn([plan.file, ...plan.args], {
+            cwd,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: childEnv,
+          });
+        } catch (error) {
+          // A sandbox that fails to start must not look like "the command printed
+          // nothing" — that silently teaches the model to hallucinate output.
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Shell could not start (${plan.backend} sandbox): ${reason}. ` +
+              `Set MOCODE_DISABLE_SANDBOX=1 to run unconfined and diagnose.`,
+          );
+        }
+      })();
       trackToolProcess(proc);
-      const timer = setTimeout(() => proc.kill(), timeout);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+      }, timeout);
       const [stdout, stderr] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
       ]);
       const exitCode = await proc.exited;
       clearTimeout(timer);
+
+      // Distinguish *why* the shell died. A timeout or a user kill also shows up
+      // as a signal; blaming the sandbox for those was wrong and unactionable.
+      if (timedOut) {
+        throw new Error(`Command timed out after ${timeout}ms and was terminated.`);
+      }
+
+      if (proc.signalCode) {
+        const sandboxCrash =
+          plan.confined && (proc.signalCode === "SIGABRT" || proc.signalCode === "SIGSEGV");
+
+        throw new Error(
+          sandboxCrash
+            ? `Shell terminated by ${proc.signalCode} — the ${plan.backend} sandbox failed to apply. ` +
+                `Set MOCODE_DISABLE_SANDBOX=1 to run unconfined and diagnose.`
+            : `Command terminated by signal ${proc.signalCode}.`,
+        );
+      }
       return {
         stdout: truncate(stdout, MAX_OUTPUT),
         stderr: truncate(stderr, MAX_OUTPUT),
@@ -299,6 +389,40 @@ export async function executeLocalTool(toolName: string, input: unknown, mode: M
       };
     }
     default:
-      throw new Error(`Unknown tool: ${toolName}`);
+      throw new ToolPermissionError("UNKNOWN_TOOL", `Unknown tool: ${toolName}`);
   }
 };
+
+/**
+ * Authorised tool entry point.
+ *
+ * Every call — allowed, refused, or failed — leaves exactly one audit line. That is
+ * what makes the executor the authority rather than the model: a refusal is a
+ * recorded decision, not an absence of attempts.
+ *
+ * The thrown error keeps a human-readable message for the model while carrying a
+ * `PermissionCode` for the log.
+ */
+export async function executeLocalTool(
+  toolName: string,
+  input: unknown,
+  mode: ModeType,
+): Promise<unknown> {
+  const detail = summarizeInput(input);
+  // Only shells have a containment question; record the answer alongside the call
+  // so an audit can distinguish "ran in a sandbox" from "ran unconfined".
+  const containment = toolName === "bash" ? { shellConfined: isShellConfined() } : {};
+
+  try {
+    const output = await runTool(toolName, input, mode);
+    recordAudit({ tool: toolName, mode, outcome: "ok", detail, ...containment });
+    return output;
+  } catch (error) {
+    recordAudit(
+      error instanceof ToolPermissionError
+        ? { tool: toolName, mode, outcome: "denied", code: error.code, detail, ...containment }
+        : { tool: toolName, mode, outcome: "error", detail, ...containment },
+    );
+    throw error;
+  }
+}

@@ -29,6 +29,7 @@ import {
 import { Mode, toolInputSchemas, type ModeType, type SupportedChatModelId, type ToolContracts } from "@mocode/shared";
 import { apiClient } from "../lib/api-client";
 import { getErrorMessage } from "../lib/http-errors";
+import { createFailoverFetch, type DowngradeInfo } from "../lib/chat-fetch";
 import { getAuth } from "../lib/auth";
 import { executeLocalTool } from "../lib/local-tools";
 import { requiresApproval, rememberSessionAllow } from "../lib/bash-approval";
@@ -58,6 +59,10 @@ import {
   type ResumeEligibility,
 } from "../lib/stream-interrupt";
 import { formatChatStreamError } from "../lib/stream-error";
+import { AgentLoop, type AgentProgress, type AgentStopReason } from "../lib/agent-loop";
+import { failoverConsentFromEnv } from "../lib/provider-chain";
+import { deriveAgentPhase, isRunActive, type AgentPhase } from "../lib/agent-phase";
+import { markToolStarted, resetToolTimings } from "../lib/tool-timing";
 import { scheduleLocalSessionPersist } from "./use-chat-persist";
 import { killTrackedToolProcesses } from "../lib/tool-process-registry";
 import {
@@ -204,6 +209,22 @@ export function useChat(
   /** Blocks sendAutomaticallyWhen after Esc finalizes tool output-error parts. */
   const turnInterruptedRef = useRef(false);
   const [turnInterrupted, setTurnInterrupted] = useState(false);
+  /**
+   * Explicit loop budget for the current user message: turn cap, per-turn tool
+   * cap, and the consecutive-repeat guard. See `lib/agent-loop.ts`.
+   */
+  const agentLoopRef = useRef<AgentLoop>(new AgentLoop());
+  const [agentProgress, setAgentProgress] = useState<AgentProgress | null>(null);
+  /** Non-null when a fallback model answered — must stay visible, never silent. */
+  const [agentDowngrade, setAgentDowngrade] = useState<DowngradeInfo | null>(null);
+  /** Live elapsed time for the current run, so the footer can count up. */
+  const [agentElapsedMs, setAgentElapsedMs] = useState<number | null>(null);
+  const runStartedAtRef = useRef<number | null>(null);
+  const reportDowngradeRef = useRef<(info: DowngradeInfo) => void>(() => {});
+  const [agentStop, setAgentStop] = useState<{
+    reason: AgentStopReason;
+    detail: string;
+  } | null>(null);
   /** Active subagent run — Esc aborts via linked AbortController (D-10). */
   const subagentAbortRef = useRef<AbortController | null>(null);
   const [subagentRunning, setSubagentRunning] = useState(false);
@@ -213,12 +234,43 @@ export function useChat(
   const onPersistErrorRef = useRef(options?.onPersistError);
   onPersistErrorRef.current = options?.onPersistError;
 
+  // Latest-ref so the memoised transport can report a downgrade without re-creating.
+  reportDowngradeRef.current = (info: DowngradeInfo) => {
+    setAgentDowngrade(info);
+    toast.show({
+      variant: "error",
+      message: `模型 ${info.from} 不可用，已回退到 ${info.to}`,
+    });
+  };
+
+  /**
+   * Surface a loop stop. Deferred via microtask because this is called from the
+   * SDK's `sendAutomaticallyWhen` predicate, which runs during render reconciliation.
+   * A stop can be observed twice (tool gate + turn gate), so it reports once.
+   */
+  const agentStopReportedRef = useRef(false);
+  const reportAgentStop = useCallback(
+    (decision: { reason: AgentStopReason; detail: string }) => {
+      // Esc already renders its own interrupted state — no toast for it.
+      if (decision.reason === "aborted" || agentStopReportedRef.current) return;
+      agentStopReportedRef.current = true;
+      queueMicrotask(() => {
+        setAgentStop({ reason: decision.reason, detail: decision.detail });
+        toast.show({ variant: "error", message: decision.detail });
+      });
+    },
+    [toast],
+  );
+
   const transport = useMemo(() => {
     // BYOK: inference + tool schema merge run in-process; MCP execution stays in onToolCall below.
     if (isLocalMode()) {
       return new LocalChatTransport({
         resolveModel: resolveChatModel,
         getMcpManager,
+        // BYOK failures happen in-process; report the downgrade the same way as SaaS.
+        allowFailover: failoverConsentFromEnv(),
+        onDowngrade: (info) => reportDowngradeRef.current({ ...info, failures: [] }),
         buildSystemPrompt: (params) =>
           buildSystemPrompt({
             ...params,
@@ -227,14 +279,12 @@ export function useChat(
       }) as ChatTransport<Message>;
     }
 
-    const chatFetch = (async (input, init) => {
-        const response = await globalThis.fetch(input, init);
-        if (!response.ok) {
-          const message = await getErrorMessage(response);
-          throw new Error(message);
-        }
-        return response;
-      }) as typeof globalThis.fetch;
+    // Retries the request on the next model when a provider is blocked (see lib/chat-fetch.ts).
+    const chatFetch = createFailoverFetch({
+      readError: getErrorMessage,
+      allowFailover: failoverConsentFromEnv(),
+      onDowngrade: (info) => reportDowngradeRef.current(info),
+    });
 
     return new DefaultChatTransport<Message>({
       api: apiClient.chat.$url().toString(),
@@ -351,6 +401,9 @@ export function useChat(
     messages: initialMessages,
     transport,
     async onToolCall({ toolCall }) {
+      // Started clock for the per-tool elapsed label; presentation only.
+      markToolStarted(toolCall.toolCallId);
+
       const shouldSkipToolOutput = () =>
         shouldSkipInterruptedToolOutput(toolCall.toolCallId, skipToolOutputIdsRef.current);
 
@@ -360,6 +413,31 @@ export function useChat(
         Mode.BUILD;
 
       const isMcpCall = looksLikeMcpToolName(toolCall.toolName);
+
+      // Loop budget: account for every tool call before it runs, so a run that is
+      // out of turns / out of per-turn calls / repeating itself stops with a named
+      // reason instead of silently continuing.
+      const loopDecision = agentLoopRef.current.recordToolCall(toolCall.toolName, toolCall.input);
+      if (loopDecision.action === "stop") {
+        reportAgentStop(loopDecision);
+        if (!shouldSkipToolOutput()) {
+          const addStopOutput = chat.addToolOutput as (params: {
+            tool?: keyof ChatTools;
+            toolCallId: string;
+            state: "output-error";
+            errorText: string;
+          }) => void;
+          addStopOutput({
+            tool: toolCall.toolName as keyof ChatTools,
+            toolCallId: toolCall.toolCallId,
+            state: "output-error",
+            errorText: loopDecision.detail,
+          });
+        }
+        return;
+      }
+
+      setAgentProgress(agentLoopRef.current.snapshot());
 
       // Phase 04 (04-03): Task subagent — synchronous blocking, summary-only (D-03, D-04).
       if (toolCall.toolName === "task") {
@@ -581,7 +659,22 @@ export function useChat(
     },
     sendAutomaticallyWhen: (params) => {
       if (turnInterruptedRef.current) return false;
-      return lastAssistantMessageIsCompleteWithToolCalls(params);
+
+      // A new user message starts a fresh budget; regenerating keeps the current one.
+      const lastUser = params.messages.findLast((message) => message.role === "user");
+      if (lastUser) agentLoopRef.current.beginUserMessage(lastUser.id);
+
+      if (!lastAssistantMessageIsCompleteWithToolCalls(params)) return false;
+
+      const decision = agentLoopRef.current.beginTurn();
+      if (decision.action === "stop") {
+        reportAgentStop(decision);
+        return false;
+      }
+
+      // Status-line budget; deferred for the same reason as reportAgentStop.
+      queueMicrotask(() => setAgentProgress(agentLoopRef.current.snapshot()));
+      return true;
     },
   });
 
@@ -618,6 +711,7 @@ export function useChat(
     setActiveSlashMessages(null);
     turnInterruptedRef.current = true;
     setTurnInterrupted(true);
+    agentLoopRef.current.abort();
     killTrackedToolProcesses();
 
     const snapshot = snapshotChatMessages(chat);
@@ -652,6 +746,13 @@ export function useChat(
       turnInterruptedRef.current = false;
       setTurnInterrupted(false);
       skipToolOutputIdsRef.current.clear();
+      // Explicit retry: hand the model a fresh budget, otherwise a run that hit
+      // `max-turns` would stop again immediately on resume.
+      agentLoopRef.current.reset();
+      agentStopReportedRef.current = false;
+      setAgentStop(null);
+      setAgentProgress(null);
+      setAgentDowngrade(null);
       const eligibility = detectResumeEligibility(chat.messages, chat.status);
       const action = resolveResumeTransport(eligibility);
       if (action === "none") return;
@@ -743,6 +844,11 @@ export function useChat(
       turnInterruptedRef.current = false;
       setTurnInterrupted(false);
       skipToolOutputIdsRef.current.clear();
+      resetToolTimings();
+      agentStopReportedRef.current = false;
+      setAgentStop(null);
+      setAgentProgress(null);
+      setAgentDowngrade(null);
 
       const trimmed = params.userText.trim();
       const exploreMatch = /^\/explore(?:\s+(.*))?$/s.exec(trimmed);
@@ -782,10 +888,46 @@ export function useChat(
     [chat.sendMessage, runSlashSubagent, toast.show],
   );
 
+  // Tick the run timer while the agent is busy. 200ms is fast enough to look live
+  // and cheap enough to ignore.
+  // Active means "the loop is doing something", not "the HTTP stream is open":
+  // tool execution and the gap before auto-resubmit also count.
+  const runActive = isRunActive({ status: chat.status, message: chat.messages.at(-1) });
+
+  useEffect(() => {
+    const busy = runActive;
+
+    if (!busy) {
+      runStartedAtRef.current = null;
+      setAgentElapsedMs(null);
+      return;
+    }
+
+    runStartedAtRef.current ??= Date.now();
+    const timer = setInterval(() => {
+      const startedAt = runStartedAtRef.current;
+      if (startedAt !== null) setAgentElapsedMs(Date.now() - startedAt);
+    }, 200);
+
+    return () => clearInterval(timer);
+  }, [runActive]);
+
+  // Derived from the live message, so the label can never disagree with what is
+  // already on screen.
+  const agentPhase: AgentPhase | null = useMemo(
+    () => deriveAgentPhase({ status: chat.status, message: chat.messages.at(-1) }),
+    [chat.status, chat.messages],
+  );
+
   return {
     messages: displayMessages,
     status: chat.status,
+    agentPhase,
+    agentElapsedMs,
     turnInterrupted,
+    agentProgress,
+    agentDowngrade,
+    agentStop,
     subagentRunning,
     subagentType,
     error: chat.error
