@@ -8,8 +8,8 @@ import {
 } from "./models";
 
 describe("model catalog hints", () => {
-  test("default model is Cerebras gpt-oss-120b", () => {
-    expect(DEFAULT_CHAT_MODEL_ID).toBe("gpt-oss-120b");
+  test("default model is DeepSeek Flash", () => {
+    expect(DEFAULT_CHAT_MODEL_ID).toBe("deepseek-flash");
   });
 
   test("marks free-tier tool-calling guidance", () => {

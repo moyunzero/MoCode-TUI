@@ -21,6 +21,7 @@ const PROVIDERS = [
   "groq",
   "cerebras",
   "openrouter",
+  "deepseek",
 ] as const;
 
 type ProviderId = (typeof PROVIDERS)[number];
