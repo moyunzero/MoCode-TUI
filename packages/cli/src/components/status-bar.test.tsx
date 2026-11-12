@@ -16,24 +16,24 @@ describe("StatusBar", () => {
 
   test("shows the turn budget once a run has continued", async () => {
     const frame = await renderText(
-      <StatusBar agentProgress={{ turn: 3, maxTurns: 24, toolCallsThisTurn: 0 }} />,
+      <StatusBar agentProgress={{ turn: 3, maxTurns: 50, toolCallsThisTurn: 0 }} />,
     );
 
-    expect(frame).toContain("turn 4/25");
+    expect(frame).toContain("turn 4/51");
     expect(frame).not.toContain("tools");
   });
 
   test("appends the tool count for the current turn", async () => {
     const frame = await renderText(
-      <StatusBar agentProgress={{ turn: 3, maxTurns: 24, toolCallsThisTurn: 4 }} />,
+      <StatusBar agentProgress={{ turn: 3, maxTurns: 50, toolCallsThisTurn: 4 }} />,
     );
 
-    expect(frame).toContain("turn 4/25 · 4 tools");
+    expect(frame).toContain("turn 4/51 · 4 tools");
   });
 
   test("hides the budget before the first continued turn", async () => {
     const frame = await renderText(
-      <StatusBar agentProgress={{ turn: 0, maxTurns: 24, toolCallsThisTurn: 0 }} />,
+      <StatusBar agentProgress={{ turn: 0, maxTurns: 50, toolCallsThisTurn: 0 }} />,
     );
 
     expect(frame).not.toContain("turn");
@@ -41,12 +41,12 @@ describe("StatusBar", () => {
 
   test("keeps the whole status line on a single row (DESIGN.md: status-row = 1)", async () => {
     const lines = await renderLines(
-      <StatusBar agentProgress={{ turn: 12, maxTurns: 24, toolCallsThisTurn: 9 }} />,
+      <StatusBar agentProgress={{ turn: 12, maxTurns: 50, toolCallsThisTurn: 9 }} />,
       { width: 100, height: 4 },
     );
 
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("turn 13/25 · 9 tools");
+    expect(lines[0]).toContain("turn 13/51 · 9 tools");
   });
 
   test("subagent footer replaces the budget while a Task runs", async () => {
@@ -54,7 +54,7 @@ describe("StatusBar", () => {
       <StatusBar
         subagentRunning
         subagentType="explore"
-        agentProgress={{ turn: 3, maxTurns: 24, toolCallsThisTurn: 4 }}
+        agentProgress={{ turn: 3, maxTurns: 50, toolCallsThisTurn: 4 }}
       />,
     );
 
@@ -81,7 +81,7 @@ describe("StatusBar", () => {
     const lines = await renderLines(
       <StatusBar
         agentDowngrade={{ from: "gpt-oss-120b", to: "deepseek-flash" }}
-        agentProgress={{ turn: 12, maxTurns: 24, toolCallsThisTurn: 9 }}
+        agentProgress={{ turn: 12, maxTurns: 50, toolCallsThisTurn: 9 }}
       />,
       // Wide enough for mode/model/downgrade/budget; tight enough to drop newline/note.
       { width: 72, height: 4 },
@@ -89,7 +89,7 @@ describe("StatusBar", () => {
 
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("fallback → deepseek-flash");
-    expect(lines[0]).toContain("turn 13/25");
+    expect(lines[0]).toContain("turn 13/51");
     expect(lines[0]).not.toContain("换行");
   });
 });
@@ -145,13 +145,13 @@ describe("live agent phase", () => {
       <StatusBar
         agentPhase="running"
         agentElapsedMs={2400}
-        agentProgress={{ turn: 2, maxTurns: 24, toolCallsThisTurn: 3 }}
+        agentProgress={{ turn: 2, maxTurns: 50, toolCallsThisTurn: 3 }}
       />,
       { width: 110, height: 4 },
     );
 
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("执行中 2.4s");
-    expect(lines[0]).toContain("turn 3/25");
+    expect(lines[0]).toContain("turn 3/51");
   });
 });

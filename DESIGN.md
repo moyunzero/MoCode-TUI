@@ -176,7 +176,7 @@ Read **bottom-up** — the way the user experiences it. This mirrors Claude Code
   elapsed timer) answers "what is it doing right now" and is derived from the
   streaming message, so it can never disagree with the transcript. It disappears
   when the agent is idle.
-  The loop-budget segment (`turn 3/24`, plus `4 tools` when the current turn has
+  The loop-budget segment (`turn 3/51`, plus `4 tools` when the current turn has
   run tools) is `DIM` meta and renders only once a run has started — it answers
   "how much of the agent budget has this message spent" without adding a second row.
 - **Footer** (`{components.session-footer}`): spinner + `esc to interrupt` on the

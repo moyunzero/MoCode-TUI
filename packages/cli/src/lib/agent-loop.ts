@@ -13,7 +13,13 @@
  * One *turn* is one model response plus the tool calls it requested. The first
  * response after a user message is turn 1. {@link AgentLoop.beginTurn} runs when
  * the loop decides to continue, so `maxTurns` bounds *continued* turns: with
- * `maxTurns: 24` a single user message can produce at most 25 model responses.
+ * `maxTurns: 50` a single user message can produce at most 51 model responses.
+ *
+ * Why 50 (see `docs/decisions.md`): published defaults span a wide range —
+ * OpenAI Agents SDK caps at 10, Claude Agent SDK leaves it unbounded, and
+ * LangGraph 1.x defaults its recursion limit to 10007 after finding 25 too tight
+ * for real tasks. A coding agent needs headroom, but "unbounded" turns a bug into
+ * an unbounded bill, so this stays a budget.
  *
  * Pure module: no React, no network, no filesystem — unit-testable in isolation.
  */
@@ -37,10 +43,35 @@ export type AgentLoopLimits = {
 };
 
 export const DEFAULT_AGENT_LIMITS: AgentLoopLimits = {
-  maxTurns: 24,
+  maxTurns: 50,
+  // A circuit breaker, not a budget: measured turns use 2-3 tools (max 2.33).
   maxToolCallsPerTurn: 16,
   maxConsecutiveRepeats: 3,
 };
+
+/**
+ * Operator overrides for the budgets.
+ *
+ * Undefined values are dropped rather than spread, so a missing env var cannot
+ * blank out a default with `undefined`.
+ */
+export function agentLimitsFromEnv(): Partial<AgentLoopLimits> {
+  const read = (name: string): number | undefined => {
+    const parsed = Number(process.env[name]);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+  };
+
+  const limits: Partial<AgentLoopLimits> = {};
+  const maxTurns = read("MOCODE_MAX_TURNS");
+  const maxToolCallsPerTurn = read("MOCODE_MAX_TOOL_CALLS");
+  const maxConsecutiveRepeats = read("MOCODE_MAX_REPEATS");
+
+  if (maxTurns !== undefined) limits.maxTurns = maxTurns;
+  if (maxToolCallsPerTurn !== undefined) limits.maxToolCallsPerTurn = maxToolCallsPerTurn;
+  if (maxConsecutiveRepeats !== undefined) limits.maxConsecutiveRepeats = maxConsecutiveRepeats;
+
+  return limits;
+}
 
 export type AgentLoopDecision =
   | { action: "continue" }
@@ -62,7 +93,7 @@ export type AgentProgress = Pick<
 
 /**
  * Status-line label for the loop budget, or `null` when no run has started.
- * One dim segment: `turn 3/24`, plus `· 4 tools` when the turn has run tools.
+ * One dim segment: `turn 3/51`, plus `· 4 tools` when the turn has run tools.
  */
 export function formatAgentProgress(progress: AgentProgress | null): string | null {
   if (!progress || progress.turn <= 0) return null;
@@ -111,13 +142,13 @@ export class AgentLoop {
   private consecutiveRepeats = 0;
 
   constructor(limits: Partial<AgentLoopLimits> = {}) {
-    this.limits = { ...DEFAULT_AGENT_LIMITS, ...limits };
+    this.limits = { ...DEFAULT_AGENT_LIMITS, ...agentLimitsFromEnv(), ...limits };
   }
 
   /**
    * Start (or continue) the loop for a user message. A different id starts a
    * fresh budget; the same id keeps the current one, so regenerating a reply does
-   * not silently hand the model an extra 24 turns.
+   * not silently hand the model an extra 50 turns.
    */
   beginUserMessage(messageId: string): void {
     if (this.userMessageId === messageId) return;

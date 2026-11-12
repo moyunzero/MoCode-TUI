@@ -166,22 +166,22 @@ describe("AgentLoop lifecycle", () => {
 describe("formatAgentProgress", () => {
   test("renders nothing before a run starts", () => {
     expect(formatAgentProgress(null)).toBeNull();
-    expect(formatAgentProgress({ turn: 0, maxTurns: 24, toolCallsThisTurn: 0 })).toBeNull();
+    expect(formatAgentProgress({ turn: 0, maxTurns: 50, toolCallsThisTurn: 0 })).toBeNull();
   });
 
   test("renders the turn budget", () => {
-    expect(formatAgentProgress({ turn: 3, maxTurns: 24, toolCallsThisTurn: 0 })).toBe("turn 4/25");
+    expect(formatAgentProgress({ turn: 3, maxTurns: 50, toolCallsThisTurn: 0 })).toBe("turn 4/51");
   });
 
   test("appends the tool count once the turn has run tools", () => {
-    expect(formatAgentProgress({ turn: 3, maxTurns: 24, toolCallsThisTurn: 4 })).toBe(
-      "turn 4/25 · 4 tools",
+    expect(formatAgentProgress({ turn: 3, maxTurns: 50, toolCallsThisTurn: 4 })).toBe(
+      "turn 4/51 · 4 tools",
     );
   });
 
   test("uses the singular label for a single tool call", () => {
-    expect(formatAgentProgress({ turn: 1, maxTurns: 24, toolCallsThisTurn: 1 })).toBe(
-      "turn 2/25 · 1 tool",
+    expect(formatAgentProgress({ turn: 1, maxTurns: 50, toolCallsThisTurn: 1 })).toBe(
+      "turn 2/51 · 1 tool",
     );
   });
 });
