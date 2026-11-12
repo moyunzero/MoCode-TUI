@@ -26,7 +26,8 @@ export type PermissionCode =
   | "PATH_ESCAPE"
   | "HARD_DENY"
   | "MODE_DENIED"
-  | "UNKNOWN_TOOL";
+  | "UNKNOWN_TOOL"
+  | "RULE_DENIED";
 
 /**
  * Refusal raised by the executor.

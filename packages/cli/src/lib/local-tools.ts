@@ -26,6 +26,7 @@ import { trackToolProcess } from "./tool-process-registry";
 import { resolveInsideCwd as resolveSafePath } from "./sandbox-path";
 import { ToolPermissionError, buildSandboxEnv, findHardDeny } from "./permission-rules";
 import { recordAudit, summarizeInput } from "./audit-log";
+import { checkRules } from "./permissions";
 import { isShellConfined, sandboxBackend } from "./sandbox-capability";
 import { parsePathList, runtimePaths, spawnPlan } from "./sandbox-profile";
 
@@ -409,6 +410,15 @@ export async function executeLocalTool(
   mode: ModeType,
 ): Promise<unknown> {
   const detail = summarizeInput(input);
+
+  // A deny rule is enforced here, at the authority, not only in the approval UI.
+  // Checked on every call so a rule edited mid-session applies immediately.
+  const verdict = checkRules({ tool: toolName, input });
+  if (verdict?.behavior === "deny") {
+    recordAudit({ tool: toolName, mode, outcome: "denied", code: "RULE_DENIED", detail });
+    throw new ToolPermissionError("RULE_DENIED", verdict.detail);
+  }
+
   // Only shells have a containment question; record the answer alongside the call
   // so an audit can distinguish "ran in a sandbox" from "ran unconfined".
   const containment = toolName === "bash" ? { shellConfined: isShellConfined() } : {};

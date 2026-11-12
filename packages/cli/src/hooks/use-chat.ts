@@ -63,6 +63,7 @@ import { AgentLoop, type AgentProgress, type AgentStopReason } from "../lib/agen
 import { failoverConsentFromEnv } from "../lib/provider-chain";
 import { deriveAgentPhase, isRunActive, type AgentPhase } from "../lib/agent-phase";
 import { markToolStarted, resetToolTimings } from "../lib/tool-timing";
+import { checkRules } from "../lib/permissions";
 import { scheduleLocalSessionPersist } from "./use-chat-persist";
 import { killTrackedToolProcesses } from "../lib/tool-process-registry";
 import {
@@ -552,9 +553,24 @@ export function useChat(
               return { approved: true };
             }
 
-            if (toolCall.toolName === "bash" && mode === Mode.BUILD) {
+            // User rules from ~/.mocode and <project>/.mocode.
+            const ruleVerdict = checkRules({
+              tool: toolCall.toolName,
+              input: toolCall.input,
+            });
+
+            if (ruleVerdict?.behavior === "deny") {
+              return { approved: false, reason: ruleVerdict.detail };
+            }
+
+            // An explicit allow skips the built-in dialogs; an explicit ask forces
+            // one even where the built-in policy would have run the tool silently.
+            const ruleAllows = ruleVerdict?.behavior === "allow";
+            const ruleAsks = ruleVerdict?.behavior === "ask";
+
+            if (!ruleAllows && toolCall.toolName === "bash" && mode === Mode.BUILD) {
               const { command } = toolInputSchemas.bash.parse(toolCall.input);
-              if (requiresApproval(command, sessionAllowRef.current)) {
+              if (ruleAsks || requiresApproval(command, sessionAllowRef.current)) {
                 const verdict = await requestBashApproval(dialog, command);
                 if (verdict === "reject") {
                   return { approved: false, reason: BASH_REJECT_ERROR_TEXT };
@@ -565,12 +581,20 @@ export function useChat(
               }
             }
 
+            // Only write tools can prompt here; a rule asking about a read is not a
+            // reason to show a write dialog.
+            const isWriteTool =
+              toolCall.toolName === "writeFile" || toolCall.toolName === "editFile";
+
             if (
-              requiresLocalWriteApproval(
-                toolCall.toolName,
-                mode,
-                sessionWriteAllowRef.current,
-              )
+              !ruleAllows &&
+              isWriteTool &&
+              (ruleAsks ||
+                requiresLocalWriteApproval(
+                  toolCall.toolName,
+                  mode,
+                  sessionWriteAllowRef.current,
+                ))
             ) {
               const verdict = await requestLocalWriteApproval(
                 dialog,

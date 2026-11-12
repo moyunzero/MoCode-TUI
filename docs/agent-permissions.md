@@ -218,6 +218,50 @@ processes sharing one `~/.mocode` could race; the loser appends to a file that w
 just rotated away. Acceptable for a single-user CLI, not for a shared agent host —
 that needs an append-only sink (file → log shipper), not a local file.
 
+### User rules
+
+The built-in policy is a floor, not the whole story: a team needs to say "never
+`git push` here" or "always allow `npm test`" without patching source.
+
+Rules live in JSON, so they are reviewable and diffable:
+
+```jsonc
+// <project>/.mocode/permissions.json   — committed with the repo
+// ~/.mocode/permissions.json           — applies to every project
+{
+  "rules": [
+    { "tool": "bash", "pattern": "^git push", "behavior": "deny" },
+    { "tool": "bash", "pattern": "^npm (test|run lint)", "behavior": "allow" },
+    { "tool": "writeFile", "behavior": "ask" }
+  ]
+}
+```
+
+| field | meaning |
+|---|---|
+| `tool` | exact tool name, or `*` |
+| `pattern` | optional JS regex tested against the command (bash) or path (file tools) |
+| `behavior` | `allow` / `deny` / `ask` |
+
+**Precedence is deny > allow > ask**, and a `deny` in either file wins over an
+`allow` in the other — a safety rule must not be defeatable by a broader allow.
+Within one behaviour the first matching rule wins, so the file reads top-down.
+
+Enforcement happens in two places on purpose:
+
+1. the **approval gate** — `deny` returns immediately without showing a dialog,
+   `allow` skips the built-in dialog, `ask` forces one;
+2. the **executor** — `deny` throws `RULE_DENIED` and is audited, so a caller that
+   never goes through the UI (evals, subagents) is still bound by the policy.
+
+A malformed rule is **dropped and reported**, never coerced: turning
+`"behavior": "denied"` into an allow would be the worst possible failure. Rules are
+re-read on every call, so an edit applies to the next tool call without a restart.
+
+**Not implemented yet:** writing rules back from the TUI ("always allow for this
+project"). The approval dialogs still record session-only allows; persisting them
+would need a new dialog action.
+
 ### Regression suite
 
 `packages/cli/src/lib/local-tools.sandbox.test.ts` runs the attack cases against the
