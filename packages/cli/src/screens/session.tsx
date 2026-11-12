@@ -90,6 +90,10 @@ function SessionChat({
     turnInterrupted,
     subagentRunning,
     subagentType,
+    agentProgress,
+    agentDowngrade,
+    agentPhase,
+    agentElapsedMs,
     submit,
     abort,
     interrupt,
@@ -234,6 +238,10 @@ function SessionChat({
       interruptible={isLoading}
       subagentRunning={subagentRunning}
       subagentType={subagentType}
+      agentProgress={agentProgress}
+      agentDowngrade={agentDowngrade}
+      agentPhase={agentPhase}
+      agentElapsedMs={agentElapsedMs}
       inputDisabled={isLoading}
       composerRestoreText={composerRestoreText}
       composerRestoreToken={composerRestoreToken}

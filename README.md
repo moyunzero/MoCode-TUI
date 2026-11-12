@@ -18,7 +18,7 @@ MoCode is a Bun monorepo that pairs a rich **TUI client** with a **Hono API serv
 |---|---|
 | **Dual agent modes** | **Plan** — read-only exploration and architecture. **Build** — full read/write/bash toolset for implementation. |
 | **Local tool execution** | The server defines tools; the CLI runs them against `process.cwd()` with path sandboxing. |
-| **Multi-provider models** | Anthropic, OpenAI, Google, Groq, Cerebras, and OpenRouter — switch models mid-session with `/models`. |
+| **Multi-provider models** | Anthropic, OpenAI, Google, Groq, Cerebras, OpenRouter, and DeepSeek — switch models mid-session with `/models`. |
 | **Session persistence & recovery** | PostgreSQL (SaaS) or local JSON (`--local`). Esc keeps partial text; tool Esc marks `Interrupted by user` and stops immediately; auto-resume on user-only tail; partial assistant uses `/resume` (regenerate). See [Session recovery](#session-recovery). |
 | **Rich TUI** | Built with [OpenTUI](https://github.com/opentui/opentui) + React 19 — themes, dialogs, keyboard layers, and slash commands. |
 | **OAuth sign-in** | Browser-based PKCE flow via Clerk; tokens stored at `~/.mocode/auth.json`. |
@@ -148,6 +148,7 @@ mocode
 | `GROQ_API_KEY` | Server | Groq API key |
 | `CEREBRAS_API_KEY` | Server | Cerebras API key |
 | `OPENROUTER_API_KEY` | Server | OpenRouter API key |
+| `DEEPSEEK_API_KEY` | Server | DeepSeek API key |
 | `CLERK_SECRET_KEY` | Server | Clerk secret key (auth) |
 | `CLERK_PUBLISHABLE_KEY` | Server | Clerk publishable key |
 | `CLERK_FRONTEND_API` | CLI | Clerk frontend API domain |
@@ -232,16 +233,19 @@ Implementation details: [`doc/harness-phase-03-stream-reliability-notes.md`](./d
 | `llama-3.3-70b-versatile` | Groq (free; weak tool calling) |
 | `openai/gpt-oss-20b` | Groq (free) |
 | `openai/gpt-oss-120b` | Groq (free) |
-| `gpt-oss-120b` | Cerebras (default for BYOK; free recommended) |
+| `gpt-oss-120b` | Cerebras (free recommended) |
 | `openai/gpt-oss-120b:free` | OpenRouter |
+| `deepseek-flash` | DeepSeek (**default**; 1M context; reachable from mainland China) |
+| `deepseek-v4-pro` | DeepSeek (stronger, ~4x the price) |
 
 The canonical list lives in `packages/shared/src/models.ts`.
 
 ### BYOK (`mocode --local`)
 
-- **Default model:** `gpt-oss-120b` (Cerebras). Set provider keys with **`/keys`** → `~/.mocode/keys.json` (local only; never sent to the MoCode server).
+- **Default model:** `deepseek-flash` (DeepSeek). Set provider keys with **`/keys`** → `~/.mocode/keys.json` (local only; never sent to the MoCode server).
+- **Why not Cerebras/Groq:** those endpoints answer `403 Forbidden` from networks where the provider is region-blocked. DeepSeek is reachable without a proxy; use `/models` to switch.
 - **`/models` hints:** *Free recommended* / *Free OK* / *Weak tool calling* — avoid weak-tool models for `/explore` and other multi-tool turns.
-- **Free-tier picks:** Cerebras `gpt-oss-120b` or Groq `openai/gpt-oss-120b`. Groq Llama ids often malform tool calls in subagent loops.
+- **Free-tier picks:** Cerebras `gpt-oss-120b` or Groq `openai/gpt-oss-120b` (only where those APIs are reachable). Groq Llama ids often malform tool calls in subagent loops.
 
 Smoke-test server `.env` keys: `bun run packages/server/scripts/test-providers.ts`
 

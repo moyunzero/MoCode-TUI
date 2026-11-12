@@ -20,9 +20,10 @@ import {
   TASK_SUMMARY_MAX_VISIBLE_LINES,
 } from "../../lib/bot-message-task";
 import { groupConsecutiveParts, partRenderKey } from "../../lib/bot-message-parts";
+import { formatToolElapsed, toolElapsedMs } from "../../lib/tool-timing";
 import type { LanguageModelUsage } from "ai";
 import prettyMs from "pretty-ms";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EmptyBorder } from "../border";
 import { Spinner } from "../spinner";
 import { useTheme } from "../../providers/theme";
@@ -193,6 +194,15 @@ export function BotMessage({
     toolsPending,
   });
   const showDuration = shouldShowDurationInFooter({ streaming, durationMs });
+
+  // While a tool is pending, re-render a few times a second so its elapsed label
+  // counts up instead of freezing at the value captured when the row appeared.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!toolsPending) return;
+    const timer = setInterval(() => tick((value) => value + 1), 200);
+    return () => clearInterval(timer);
+  }, [toolsPending]);
   const showMessageFooter = shouldShowAssistantMessageFooter(parts);
 
   return (
@@ -239,10 +249,14 @@ export function BotMessage({
                   ? formatBashToolDisplay(part.input)
                   : null;
               const argsText = bashDisplay?.command ?? formatToolArgs(part);
-              const statusSuffix =
-                part.state !== "output-available" && part.state !== "output-error"
+              const isPending =
+                part.state !== "output-available" && part.state !== "output-error";
+              const elapsed = isPending ? toolElapsedMs(part.toolCallId) : null;
+              const statusSuffix = isPending
+                ? elapsed === null
                   ? " …"
-                  : "";
+                  : ` … ${formatToolElapsed(elapsed)}`
+                : "";
               const errorSuffix =
                 part.state === "output-error" && part.errorText
                   ? ` ${formatToolErrorForDisplay(toolName, part.errorText)}`

@@ -33,6 +33,7 @@ type GoogleModelId = Extract<SupportedChatModel, { provider: "google" }>["id"];
 type GroqModelId = Extract<SupportedChatModel, { provider: "groq" }>["id"];
 type CerebrasModelId = Extract<SupportedChatModel, { provider: "cerebras" }>["id"];
 type OpenRouterModelId = Extract<SupportedChatModel, { provider: "openrouter" }>["id"];
+type DeepSeekModelId = Extract<SupportedChatModel, { provider: "deepseek" }>["id"];
 
 export type ResolvedModel = {
   model: LanguageModel;
@@ -200,6 +201,20 @@ function resolveOpenRouterModel(modelId: OpenRouterModelId, apiKey: string): Res
   };
 }
 
+function resolveDeepSeekModel(modelId: DeepSeekModelId, apiKey: string): ResolvedModel {
+  // DeepSeek only implements Chat Completions; createOpenAI() defaults to Responses API.
+  const deepseek = createOpenAI({
+    apiKey,
+    baseURL: "https://api.deepseek.com/v1",
+    name: "deepseek",
+  });
+  return {
+    model: deepseek.chat(modelId),
+    provider: "deepseek",
+    modelId,
+  };
+}
+
 function resolveSupportedChatModel(
   model: SupportedChatModel,
   keys: ProviderKeys | null,
@@ -223,6 +238,8 @@ function resolveSupportedChatModel(
         model.id,
         requireProviderApiKey("openrouter", keys),
       );
+    case "deepseek":
+      return resolveDeepSeekModel(model.id, requireProviderApiKey("deepseek", keys));
     default: {
       const _exhaustive: never = model;
       throw new Error(`Unsupported provider: ${String(_exhaustive)}`);

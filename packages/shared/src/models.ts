@@ -15,7 +15,8 @@ export type ModelPricing = {
     | "google"
     | "groq"
     | "cerebras"
-    | "openrouter";
+    | "openrouter"
+    | "deepseek";
   
   type SupportedChatModelDefinition = {
     id: string;
@@ -130,6 +131,27 @@ export type ModelPricing = {
         outputUsdPerMillionTokens: 0.1,
       },
     },
+    {
+      // DeepSeek V4.1 Flash (1M context, tool calls + vision). Pricing is peak
+      // cache-miss input + peak output so credit estimates over- rather than
+      // under-charge; cache hits and off-peak hours are half or less.
+      // Source: api-docs.deepseek.com/quick_start/pricing
+      id: "deepseek-flash",
+      provider: "deepseek",
+      pricing: {
+        inputUsdPerMillionTokens: 0.3,
+        outputUsdPerMillionTokens: 1.2,
+      },
+    },
+    {
+      // DeepSeek V4 Pro — same pricing basis as deepseek-flash above.
+      id: "deepseek-v4-pro",
+      provider: "deepseek",
+      pricing: {
+        inputUsdPerMillionTokens: 1.32,
+        outputUsdPerMillionTokens: 3.96,
+      },
+    },
   ] as const satisfies readonly SupportedChatModelDefinition[];
   
   export type SupportedChatModel = (typeof SUPPORTED_CHAT_MODELS)[number];
@@ -147,8 +169,12 @@ export type ModelPricing = {
     { message: "Unsupported chat model" },
   );
   
-  /** Default model when the session UI does not expose an explicit picker yet. */
-  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "gpt-oss-120b";
+  /**
+   * Default model. DeepSeek is reachable from mainland China without a proxy,
+   * unlike the Cerebras / Groq / Anthropic endpoints (which answer 403 "Forbidden"
+   * behind a country block). Switch with `/models`.
+   */
+  export const DEFAULT_CHAT_MODEL_ID: SupportedChatModelId = "deepseek-flash";
 
   /** BYOK catalog hints for the `/models` picker (free-tier tool-calling guidance). */
   export type ModelCatalogHint = "free-recommended" | "free-ok" | "weak-tools";

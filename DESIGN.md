@@ -103,7 +103,7 @@ components:
   reasoning-block:  { ref: "BotMessage.reasoning", role: "quiet-bar block, 'Thinking:' label, dim body" }
   tool-block:       { ref: "BotMessage.tool",   role: "quiet-bar block, info-colored tool label, args, pending/error suffix" }
   composer:         { ref: InputBar,            role: "Multiline textarea inside the mode-tinted accent bar; hosts overlays" }
-  status-bar:       { ref: StatusBar,           role: "Single dim row: mode › model · submit · newline hints" }
+  status-bar:       { ref: StatusBar,           role: "Single dim row: mode › model · live phase · fallback notice · loop budget · submit · newline hints" }
   session-footer:   { ref: "SessionShell.footer", role: "Spinner + interrupt hint (left) / tab-agent hint (right)" }
   dialog-shell:     { ref: "DialogProvider.Dialog", role: "Centered modal overlay card; dim backdrop; title + esc-affordance" }
   search-list:      { ref: DialogSearchList,    role: "Filter input + scrolling single-select list with selection highlight" }
@@ -171,7 +171,14 @@ Read **bottom-up** — the way the user experiences it. This mirrors Claude Code
   multiline `textarea`. Slash-command and @-mention palettes float **above** it
   (`position:absolute; bottom:100%`), never pushing the transcript.
 - **Status line** (`{components.status-bar}`): exactly one dim row, Codex-style —
-  `mode {glyph.sep-chevron} model {glyph.sep-dot} submit hint {glyph.sep-dot} newline hint`.
+  `mode {glyph.sep-chevron} model {glyph.sep-dot} live phase {glyph.sep-dot} loop budget {glyph.sep-dot} submit hint {glyph.sep-dot} newline hint`.
+  The live-phase segment (`等待首字` / `思考中` / `执行中` / `生成中`, each with an
+  elapsed timer) answers "what is it doing right now" and is derived from the
+  streaming message, so it can never disagree with the transcript. It disappears
+  when the agent is idle.
+  The loop-budget segment (`turn 3/51`, plus `4 tools` when the current turn has
+  run tools) is `DIM` meta and renders only once a run has started — it answers
+  "how much of the agent budget has this message spent" without adding a second row.
 - **Footer** (`{components.session-footer}`): spinner + `esc to interrupt` on the
   left while streaming; `tab agent` hint pinned right.
 

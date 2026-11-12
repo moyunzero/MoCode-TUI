@@ -29,6 +29,17 @@ export {
 } from "./mcp-tools";
 
 export {
+  /** Context budget: token estimation + fold-based compaction (server and BYOK). */
+  DEFAULT_COMPACTION_POLICY,
+  compactMessages,
+  estimateMessageTokens,
+  estimateMessagesTokens,
+  estimateTextTokens,
+  type CompactionPolicy,
+  type CompactionResult,
+} from "./context-compaction";
+
+export {
   hasVisibleAssistantContent,
   type AssistantMessageLike,
 } from "./assistant-content";

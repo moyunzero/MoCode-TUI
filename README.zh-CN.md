@@ -18,7 +18,7 @@ MoCode 是一个基于 Bun 的 monorepo，由功能丰富的 **TUI 客户端** �
 |---|---|
 | **双 Agent 模式** | **Plan** — 只读探索与架构分析。**Build** — 完整读写/bash 工具集，用于实现代码。 |
 | **本地工具执行** | 服务端定义工具契约，CLI 在 `process.cwd()` 下执行，并做路径沙箱隔离。 |
-| **多模型支持** | Anthropic、OpenAI、Google、Groq、Cerebras、OpenRouter — 会话中随时用 `/models` 切换。 |
+| **多模型支持** | Anthropic、OpenAI、Google、Groq、Cerebras、OpenRouter、DeepSeek — 会话中随时用 `/models` 切换。 |
 | **会话持久化与恢复** | PostgreSQL（SaaS）或本地 JSON（`--local`）。Esc 保留 partial 正文；工具执行中 Esc 标记 `Interrupted by user` 并立即停止；末条 user 重开自动续写；partial 助手需 `/resume`（regenerate）。详见 [会话恢复](#会话恢复)。 |
 | **富 TUI 界面** | 基于 [OpenTUI](https://github.com/opentui/opentui) + React 19 — 主题、对话框、键盘层与斜杠命令。 |
 | **OAuth 登录** | 通过 Clerk 的浏览器 PKCE 流程；Token 保存在 `~/.mocode/auth.json`。 |
@@ -148,6 +148,7 @@ mocode
 | `GROQ_API_KEY` | 服务端 | Groq API Key |
 | `CEREBRAS_API_KEY` | 服务端 | Cerebras API Key |
 | `OPENROUTER_API_KEY` | 服务端 | OpenRouter API Key |
+| `DEEPSEEK_API_KEY` | 服务端 | DeepSeek API Key |
 | `CLERK_SECRET_KEY` | 服务端 | Clerk Secret Key（认证） |
 | `CLERK_PUBLISHABLE_KEY` | 服务端 | Clerk Publishable Key |
 | `CLERK_FRONTEND_API` | CLI | Clerk Frontend API 域名 |
@@ -232,16 +233,19 @@ macOS Terminal.app 可运行 `mocode --terminal-setup` 一次，启用 Option-as
 | `llama-3.3-70b-versatile` | Groq（免费；工具调用不稳定） |
 | `openai/gpt-oss-20b` | Groq（免费） |
 | `openai/gpt-oss-120b` | Groq（免费） |
-| `gpt-oss-120b` | Cerebras（BYOK 默认；免费推荐） |
+| `gpt-oss-120b` | Cerebras（免费推荐） |
 | `openai/gpt-oss-120b:free` | OpenRouter |
+| `deepseek-flash` | DeepSeek（**默认**；1M 上下文；国内可直连） |
+| `deepseek-v4-pro` | DeepSeek（更强，价格约为 4 倍） |
 
 权威列表见 `packages/shared/src/models.ts`。
 
 ### BYOK（`mocode --local`）
 
-- **默认模型：** `gpt-oss-120b`（Cerebras）。用 **`/keys`** 写入 `~/.mocode/keys.json`（仅存本机，不上传服务端）。
+- **默认模型：** `deepseek-flash`（DeepSeek）。用 **`/keys`** 写入 `~/.mocode/keys.json`（仅存本机，不上传服务端）。
+- **为什么不用 Cerebras/Groq：** 在厂商按地区封锁的网络里，这两个端点会返回 `403 Forbidden`。DeepSeek 可直连；用 `/models` 切换。
 - **`/models` 标注：** *免费推荐* / *免费可用* / *工具调用不稳定* — `/explore` 等多工具场景请避开不稳定项。
-- **免费档推荐：** Cerebras `gpt-oss-120b` 或 Groq `openai/gpt-oss-120b`。Groq Llama 系列在子代理多步 tool loop 中易格式错误。
+- **免费档推荐：** Cerebras `gpt-oss-120b` 或 Groq `openai/gpt-oss-120b`（仅在这两家可达的网络下）。Groq Llama 系列在子代理多步 tool loop 中易格式错误。
 
 冒烟测试服务端 `.env` Key：`bun run packages/server/scripts/test-providers.ts`
 

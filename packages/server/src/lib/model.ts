@@ -6,7 +6,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { cerebras } from "@ai-sdk/cerebras";
 import { google } from "@ai-sdk/google";
 import { groq } from "@ai-sdk/groq";
-import { openai } from "@ai-sdk/openai";
+import { createOpenAI, openai } from "@ai-sdk/openai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 import {
@@ -26,6 +26,7 @@ type GoogleModelId = Extract<SupportedChatModel, { provider: "google" }>["id"];
 type GroqModelId = Extract<SupportedChatModel, { provider: "groq" }>["id"];
 type CerebrasModelId = Extract<SupportedChatModel, { provider: "cerebras" }>["id"];
 type OpenRouterModelId = Extract<SupportedChatModel, { provider: "openrouter" }>["id"];
+type DeepSeekModelId = Extract<SupportedChatModel, { provider: "deepseek" }>["id"];
 
 export type ResolvedModel = {
     model: LanguageModel;
@@ -173,6 +174,24 @@ function resolveOpenRouterModel(modelId: OpenRouterModelId): ResolvedModel {
     };
 }
 
+function resolveDeepSeekModel(modelId: DeepSeekModelId): ResolvedModel {
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+        throw new Error("DEEPSEEK_API_KEY is not set");
+    }
+    // DeepSeek only implements Chat Completions; createOpenAI() defaults to Responses API.
+    const deepseek = createOpenAI({
+        apiKey,
+        baseURL: "https://api.deepseek.com/v1",
+        name: "deepseek",
+    });
+    return {
+        model: deepseek.chat(modelId),
+        provider: "deepseek",
+        modelId,
+    };
+}
+
 function resolveSupportedChatModel(model: SupportedChatModel): ResolvedModel {
     switch (model.provider) {
         case "anthropic":
@@ -187,6 +206,8 @@ function resolveSupportedChatModel(model: SupportedChatModel): ResolvedModel {
             return resolveCerebrasModel(model.id);
         case "openrouter":
             return resolveOpenRouterModel(model.id);
+        case "deepseek":
+            return resolveDeepSeekModel(model.id);
         default: {
             const _exhaustive: never = model;
             throw new Error(`Unsupported provider: ${String(_exhaustive)}`);

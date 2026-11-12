@@ -48,6 +48,14 @@ const FREE_MODELS = [
         modelId: "openai/gpt-oss-120b:free",
         envKey: "OPENROUTER_API_KEY",
     },
+    {
+        modelId: "deepseek-flash",
+        envKey: "DEEPSEEK_API_KEY",
+    },
+    {
+        modelId: "deepseek-v4-pro",
+        envKey: "DEEPSEEK_API_KEY",
+    },
 ] as const;
 
 const BASIC_PROMPT = "Reply with exactly: OK";

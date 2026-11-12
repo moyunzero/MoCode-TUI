@@ -1,8 +1,19 @@
 type ErrorResponse = {
-    json: () => Promise<unknown>;
-    status: number;
-    statusText: string;
+  json: () => Promise<unknown>;
+  status: number;
+  statusText: string;
 };
+
+/** HTTP failure that keeps the status code so callers can act on it. */
+export class HttpError extends Error {
+  constructor(
+    readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
 
 /** Extract a human-readable message from the server's `{ error }` JSON envelope. */
 export async function getErrorMessage(response: ErrorResponse) {
@@ -16,4 +27,4 @@ export async function getErrorMessage(response: ErrorResponse) {
     }
   
     return response.statusText || `Request failed with status ${response.status}`;
-  };
+  }

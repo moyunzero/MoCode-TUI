@@ -1,12 +1,17 @@
 /**
- * Blocklist-based bash approval for Build mode (HARNESS-03).
+ * Bash approval policy (HARNESS-03).
  *
- * Only commands matching D-13 patterns require user confirmation.
+ * Two regimes, because the honest answer depends on the host:
+ *
+ * 1. **Confined shell** — an OS sandbox (seatbelt / bwrap) applies, so the
+ *    blocklist is a backup: only listed destructive commands ask.
+ * 2. **Unconfined shell** — no sandbox is available. An unsandboxed shell can read
+ *    anything the user can, so a blocklist would be theatre and *every* command asks.
+ *
  * Session allowlist is owned by use-chat (passed in, not a global singleton).
- *
- * Limits: whitespace normalization only; obfuscation via env vars or quoting
- * may bypass patterns — acceptable per phase discretion.
  */
+import { isShellConfined } from "./sandbox-capability";
+
 export type BashApprovalVerdict = "approve-once" | "reject" | "allow-session";
 
 /**
@@ -23,7 +28,9 @@ const BLOCKLIST: RegExp[] = [
   /\bchmod\s+[^\n]*(-R|--recursive)\b/, // recursive permission changes
   /\b(curl|wget)\s+[^\n]*\|\s*(ba)?sh\b/, // pipe remote script directly into shell
   /\bdd\s+[^\n]*if=/, // raw disk write (dd if=/dev/...)
-  />\s*\/dev\//, // redirect stdout/stderr into a device node
+  // Only block devices. `2>/dev/null` is everywhere and harmless; matching it made
+  // the dialog fire on ordinary commands, which trains users to approve blindly.
+  />\s*\/dev\/(?:sd|disk|nvme|hd|rdisk)/, // redirect into a block device
 ];
 
 /** Trim and collapse internal whitespace for blocklist and allowlist keys. */
@@ -36,9 +43,24 @@ export function rememberSessionAllow(sessionAllowed: Set<string>, command: strin
   sessionAllowed.add(normalizeCommand(command));
 }
 
-/** True when command matches the blocklist and is not session-allowed. */
-export function requiresApproval(command: string, sessionAllowed: Set<string>): boolean {
+/**
+ * True when command matches the blocklist and is not session-allowed.
+ *
+ * `confined` describes whether the spawned shell is OS-sandboxed. It defaults to
+ * the real capability, because the distinction changes the answer: an unconfined
+ * shell can read anything, so a blocklist is not a safety net and *every* command
+ * needs a human decision.
+ */
+export function requiresApproval(
+  command: string,
+  sessionAllowed: Set<string>,
+  options: { confined?: boolean } = {},
+): boolean {
   const normalized = normalizeCommand(command);
   if (sessionAllowed.has(normalized)) return false;
+
+  const confined = options.confined ?? isShellConfined();
+  if (!confined) return true;
+
   return BLOCKLIST.some((re) => re.test(normalized));
 }
